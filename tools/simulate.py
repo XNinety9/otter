@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Simulate a swarm of Otter devices, following docs/protocol.md.
+
+    uv run --with httpx tools/simulate.py --count 8 --fail-rate 0.1
+
+Each fake device checks in periodically; when given an update it downloads the image
+(slowly, to watch progress bars), checks its SHA-256, "reboots" and comes back on the
+new version -- or rolls back, depending on --fail-rate.
+"""
+
+import argparse
+import asyncio
+import hashlib
+import random
+
+import httpx
+
+APPS = [("weather-station", "esp32"), ("plant-sensor", "esp8266"), ("led-strip", "esp32c3")]
+
+
+class FakeDevice:
+    def __init__(self, n: int, args: argparse.Namespace) -> None:
+        self.args = args
+        self.mac = f"de:ad:be:ef:{n // 256:02x}:{n % 256:02x}"
+        self.app, self.hw = APPS[n % len(APPS)]
+        self.version = "1.0.0"
+        self.ip = f"192.168.1.{100 + n}"
+        self.boot = asyncio.get_running_loop().time()
+        self.headers = {"X-Otter-Key": args.key} if args.key else {}
+        self.interval = args.interval or 30
+
+    def log(self, msg: str) -> None:
+        print(f"[{self.mac}] {msg}", flush=True)
+
+    async def run(self, client: httpx.AsyncClient) -> None:
+        await asyncio.sleep(random.uniform(0, 2))
+        loop = asyncio.get_running_loop()
+        while True:
+            started = loop.time()
+            try:
+                resp = await self.checkin(client)
+                if order := resp["update"]:
+                    await self.apply(client, order)
+                    continue  # "reboot": check in again right away
+                self.interval = self.args.interval or resp["checkin_interval_s"]
+                # With long polling the server already held us: poll again right away.
+                delay = self.interval * random.uniform(0.9, 1.1) - (loop.time() - started)
+            except httpx.HTTPError as exc:
+                self.log(f"server unreachable: {exc!r}")
+                delay = 5
+            await asyncio.sleep(max(delay, 0))
+
+    async def checkin(self, client: httpx.AsyncClient) -> dict:
+        loop = asyncio.get_running_loop()
+        res = await client.post(
+            "/api/v1/checkin",
+            headers=self.headers,
+            json={
+                "mac": self.mac,
+                "hw": self.hw,
+                "app": self.app,
+                "fw_version": self.version,
+                "ip": self.ip,
+                "rssi": random.randint(-85, -45),
+                "uptime_s": int(loop.time() - self.boot),
+                "wait_s": 0 if self.args.no_long_poll else int(self.interval),
+            },
+            timeout=self.interval + 15,
+        )
+        res.raise_for_status()
+        return res.json()
+
+    async def report(self, client: httpx.AsyncClient, dep: int, state: str, progress=0, error=None) -> bool:
+        res = await client.post(
+            f"/api/v1/deployments/{dep}/progress",
+            headers=self.headers,
+            json={"state": state, "progress": progress, "error": error},
+        )
+        return res.status_code != 409  # 409 = cancelled, abort
+
+    async def apply(self, client: httpx.AsyncClient, order: dict) -> None:
+        dep = order["deployment_id"]
+        self.log(f"updating {self.version} -> {order['version']}")
+        digest = hashlib.sha256()
+        received = last_reported = 0
+        speed = random.uniform(0.6, 1.4) * self.args.duration
+
+        async with client.stream("GET", order["url"], headers=self.headers) as res:
+            res.raise_for_status()
+            if not await self.report(client, dep, "downloading", 0):
+                return self.log("cancelled")
+            async for chunk in res.aiter_bytes(4096):
+                digest.update(chunk)
+                received += len(chunk)
+                pct = received * 100 // order["size"]
+                # Pace the transfer so a whole download takes ~--duration seconds.
+                await asyncio.sleep(speed * len(chunk) / order["size"])
+                if pct - last_reported >= 5:
+                    last_reported = pct
+                    if not await self.report(client, dep, "downloading", pct):
+                        return self.log("cancelled by server, aborting")
+
+        if digest.hexdigest() != order["sha256"]:
+            await self.report(client, dep, "failed", error="sha256 mismatch")
+            return self.log("sha256 mismatch")
+        if random.random() < self.args.fail_rate / 2:
+            await self.report(client, dep, "failed", error="flash write error")
+            return self.log("simulated flash error")
+
+        await self.report(client, dep, "rebooting", 100)
+        await asyncio.sleep(random.uniform(2, 4))
+        self.boot = asyncio.get_running_loop().time()
+        if random.random() < self.args.fail_rate / 2:
+            self.log("new image crashed, bootloader rolled back")
+        else:
+            self.version = order["version"]
+            self.log(f"now running {self.version}")
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--server", default="http://localhost:8000")
+    parser.add_argument("--count", type=int, default=6)
+    parser.add_argument("--interval", type=float, help="override the server's check-in interval")
+    parser.add_argument("--duration", type=float, default=15, help="approx. seconds per download")
+    parser.add_argument("--fail-rate", type=float, default=0.0, help="0..1, share of updates that fail")
+    parser.add_argument("--key", help="fleet key (X-Otter-Key)")
+    parser.add_argument("--no-long-poll", action="store_true", help="plain periodic check-ins")
+    args = parser.parse_args()
+
+    async with httpx.AsyncClient(base_url=args.server, timeout=30) as client:
+        devices = [FakeDevice(n, args) for n in range(args.count)]
+        await asyncio.gather(*(d.run(client) for d in devices))
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

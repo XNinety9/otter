@@ -1,0 +1,9 @@
+version: "0.1.0"
+description: Otter agent - fleet check-in and OTA updates
+dependencies:
+  idf: ">=5.0"
+  espressif/cjson:
+    version: "^1.7.19"
+    require: private
+    rules:
+      - if: "idf_version >=6.0"

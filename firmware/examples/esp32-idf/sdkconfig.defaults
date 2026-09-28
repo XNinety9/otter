@@ -1,0 +1,6 @@
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+# The bootloader reverts to the previous slot if a new firmware never marks itself valid.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

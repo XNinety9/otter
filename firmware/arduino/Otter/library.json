@@ -1,0 +1,11 @@
+{
+  "name": "Otter",
+  "version": "0.1.0",
+  "description": "Otter agent: fleet check-in and OTA updates for ESP8266 / ESP32 (see docs/protocol.md)",
+  "keywords": ["ota", "fleet", "iot"],
+  "frameworks": "arduino",
+  "platforms": ["espressif8266", "espressif32"],
+  "dependencies": [
+    { "owner": "bblanchon", "name": "ArduinoJson", "version": "^7.0.0" }
+  ]
+}
