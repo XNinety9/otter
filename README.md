@@ -84,6 +84,24 @@ With ESP-IDF, a new firmware is marked valid once it reaches the server (or when
 reports the deployment as failed. The ESP8266 has no such safety net: only the image header
 and SHA-256 are checked before rebooting.
 
+## Database migrations
+
+The schema is managed with [Alembic](https://alembic.sqlalchemy.org/). The server upgrades its
+database automatically at startup; databases created before migrations existed are adopted in
+place, without data loss.
+
+After changing `server/otter/models.py`, generate a migration, review it, and commit it with the
+model change:
+
+```sh
+cd server
+uv run alembic revision --autogenerate --rev-id 0002 -m "add device tags"
+```
+
+Revisions are numbered sequentially (`0002`, `0003`…). SQLite can't alter most things in place,
+so migrations run in batch mode (tables are recreated). The test suite fails if the models and the
+migrations drift apart.
+
 ## Tests
 
 ```sh

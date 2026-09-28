@@ -6,14 +6,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from . import api_device, api_ui, config
-from .db import Base, engine
 from .events import broadcaster, wakeups
+from .migrate import upgrade_database
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     config.FIRMWARE_DIR.mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(engine)
+    upgrade_database()
     broadcaster.bind(asyncio.get_running_loop())
     wakeups.bind(asyncio.get_running_loop())
     yield
