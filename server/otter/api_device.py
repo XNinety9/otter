@@ -14,9 +14,9 @@ from sqlalchemy.orm import Session
 from . import config
 from .db import SessionLocal, get_session, utcnow
 from .events import broadcaster, wakeups
-from .metrics import CHECKINS, DOWNLOAD_BYTES, DOWNLOADS
+from .metrics import CHECKINS, CRASHES, DOWNLOAD_BYTES, DOWNLOADS
 from .notify import notifier
-from .models import Deployment, Device, Firmware
+from .models import CRASH_RESETS, Deployment, Device, Firmware
 from .schemas import CheckinIn, CheckinOut, DeviceOut, ProgressIn, UpdateOrder
 from .storage import firmware_path
 
@@ -75,11 +75,15 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
         device.hw = body.hw
         device.app = body.app
         device.fw_version = body.fw_version
+        rebooted = not is_new and restarted(device, body)
         device.ip = body.ip or (request.client.host if request.client else None)
         device.rssi = body.rssi
         device.uptime_s = body.uptime_s
+        device.free_heap, device.min_free_heap = body.free_heap, body.min_free_heap
+        device.reset_reason, device.boot_count = body.reset_reason, body.boot_count
         if body.ota_slot_size is not None:
             device.ota_slot_size = body.ota_slot_size
+        crashed = rebooted and body.reset_reason in CRASH_RESETS
         device.last_seen = utcnow()
         CHECKINS.labels(body.app).inc()
 
@@ -114,7 +118,17 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
             notifier.device_seen(device.id)
         if failed:
             notifier.emit("deployment_failed", deployment_id=failed.id)
+        if crashed:
+            CRASHES.labels(body.app, body.reset_reason).inc()
+            notifier.emit("device_crashed", device_id=device.id, reason=body.reset_reason)
         return order
+
+
+def restarted(device: Device, body: CheckinIn) -> bool:
+    """Whether the device rebooted since its previous check-in."""
+    if body.boot_count is not None and device.boot_count is not None:
+        return body.boot_count != device.boot_count
+    return body.uptime_s is not None and device.uptime_s is not None and body.uptime_s < device.uptime_s
 
 
 @router.post("/deployments/{deployment_id}/progress")

@@ -67,6 +67,16 @@ function isOnline(d) {
   return Date.now() - Date.parse(d.last_seen) < (state.interval * 2.5 + 5) * 1000;
 }
 
+// Same list as the server: restarts that mean the firmware crashed or the power is weak.
+const CRASH_RESETS = new Set(["panic", "int_watchdog", "task_watchdog", "watchdog", "brownout", "power_glitch", "cpu_lockup"]);
+const crashed = (d) => CRASH_RESETS.has(d.reset_reason);
+
+function lastReset(d) {
+  if (!d.reset_reason) return "—";
+  const reason = d.reset_reason.replaceAll("_", " ");
+  return d.boot_count == null ? reason : `${reason} · boot #${d.boot_count}`;
+}
+
 // Same rule as the server: an unknown OTA slot size is trusted.
 function fits(d, fw) {
   return d.ota_slot_size == null || fw.size <= d.ota_slot_size;
@@ -150,7 +160,8 @@ function updateRow(tr, d) {
   $(".name", tr).textContent = label(d);
   $(".mac", tr).textContent = d.name ? d.mac : "";
   $(".row-tags", tr).innerHTML = d.tags.map((t) => `<span class="tag-chip">#${esc(t)}</span>`).join("") +
-    (d.channel ? `<span class="chan-chip" title="Follows the ${esc(d.channel)} channel">⇢ ${esc(d.channel)}</span>` : "");
+    (d.channel ? `<span class="chan-chip" title="Follows the ${esc(d.channel)} channel">⇢ ${esc(d.channel)}</span>` : "") +
+    (crashed(d) ? `<span class="crash-chip" title="Last restart: ${esc(lastReset(d))}">⚠ ${esc(d.reset_reason.replaceAll("_", " "))}</span>` : "");
   $(".app", tr).textContent = d.app;
   $(".hw", tr).textContent = d.hw;
   $(".fw", tr).innerHTML = active
@@ -480,6 +491,8 @@ function renderPanel() {
     ["MAC", d.mac],
     ["Signal", d.rssi == null ? "—" : `${d.rssi} dBm`],
     ["Uptime", uptime(d.uptime_s)],
+    ["Last reset", lastReset(d), crashed(d) ? "crash" : ""],
+    ["Free heap", d.free_heap == null ? "—" : `${bytes(d.free_heap)}${d.min_free_heap == null ? "" : ` · min ${bytes(d.min_free_heap)}`}`],
     ["Last seen", `${ago(d.last_seen)} · ${isOnline(d) ? "online" : "offline"}`],
     ["First seen", new Date(d.first_seen).toLocaleString()],
   ];
@@ -487,7 +500,7 @@ function renderPanel() {
   if (document.activeElement !== follow) follow.innerHTML = channelOptions(d.channel, "Manual updates only");
   $(".tag-list", panel).innerHTML = d.tags.map((t) => `
     <span class="tag-chip">#${esc(t)}<button data-tag="${esc(t)}" aria-label="Remove tag ${esc(t)}">×</button></span>`).join("");
-  $(".info", panel).innerHTML = info.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
+  $(".info", panel).innerHTML = info.map(([k, v, cls = ""]) => `<div><dt>${esc(k)}</dt><dd class="${cls}">${esc(v)}</dd></div>`).join("");
 
   // Refetch the history only when the latest deployment changes state.
   const dep = d.last_deployment;

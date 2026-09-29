@@ -19,6 +19,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 #include "psa/crypto.h"
 #include "sdkconfig.h"
 
@@ -49,6 +50,7 @@ typedef struct {
 static otter_config_t s_cfg;
 static uint32_t s_interval_s = 30;
 static bool s_pending_verify;
+static int32_t s_boot_count = -1; /* -1: unknown (no NVS) */
 
 /* --- HTTP helpers --------------------------------------------------------- */
 
@@ -156,6 +158,44 @@ static bool report(int deployment_id, const char *state, int progress, const cha
 
 /* --- Check-in ------------------------------------------------------------- */
 
+static const char *reset_reason(void)
+{
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power_on";
+    case ESP_RST_EXT: return "external";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT: return "int_watchdog";
+    case ESP_RST_TASK_WDT: return "task_watchdog";
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep_sleep";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_SDIO: return "sdio";
+    case ESP_RST_USB: return "usb";
+    case ESP_RST_JTAG: return "jtag";
+    case ESP_RST_EFUSE: return "efuse";
+    case ESP_RST_PWR_GLITCH: return "power_glitch";
+    case ESP_RST_CPU_LOCKUP: return "cpu_lockup";
+    default: return "unknown";
+    }
+}
+
+/* Counts boots in NVS, so the server can tell a restart from a long silence. Needs
+ * nvs_flash_init(), which Wi-Fi requires anyway; without it the count isn't sent. */
+static void count_boot(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open("otter", NVS_READWRITE, &nvs) != ESP_OK) {
+        return;
+    }
+    int32_t count = 0;
+    nvs_get_i32(nvs, "boots", &count);
+    if (nvs_set_i32(nvs, "boots", count + 1) == ESP_OK && nvs_commit(nvs) == ESP_OK) {
+        s_boot_count = count + 1;
+    }
+    nvs_close(nvs);
+}
+
 /* Long polling: the server holds the check-in until an update is scheduled for us or
  * this delay elapses, so a deployment reaches the device within a second or two.
  * A firmware awaiting validation must hear back at once instead. */
@@ -190,6 +230,12 @@ static char *build_checkin_body(void)
     cJSON_AddStringToObject(obj, "app", s_cfg.app_name);
     cJSON_AddStringToObject(obj, "fw_version", s_cfg.version);
     cJSON_AddNumberToObject(obj, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+    cJSON_AddNumberToObject(obj, "free_heap", esp_get_free_heap_size());
+    cJSON_AddNumberToObject(obj, "min_free_heap", esp_get_minimum_free_heap_size());
+    cJSON_AddStringToObject(obj, "reset_reason", reset_reason());
+    if (s_boot_count >= 0) {
+        cJSON_AddNumberToObject(obj, "boot_count", s_boot_count);
+    }
     const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
     if (slot) {
         cJSON_AddNumberToObject(obj, "ota_slot_size", slot->size);
@@ -532,6 +578,7 @@ esp_err_t otter_start(const otter_config_t *config)
     if (!s_cfg.version) {
         s_cfg.version = esp_app_get_description()->version;
     }
+    count_boot();
     if (!s_cfg.rollback_timeout_s) {
         s_cfg.rollback_timeout_s = 300;
     }
