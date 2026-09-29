@@ -8,6 +8,12 @@ from .db import Base, utcnow
 # queued: waiting for a later stage of a rollout, invisible to the device.
 ACTIVE_STATES = ("pending", "downloading", "rebooting")
 OPEN_STATES = ("queued", *ACTIVE_STATES)
+def silence_allowed(base_s: float, next_checkin_s: int | None) -> float:
+    """How long a device may stay silent before counting as offline: the usual timeout, or
+    longer for a device that said when it would check in next (deep sleep, #20)."""
+    return max(base_s, next_checkin_s * 1.25 + 60) if next_checkin_s else base_s
+
+
 # Reset reasons that mean the firmware crashed or the hardware is struggling.
 CRASH_RESETS = {"panic", "int_watchdog", "task_watchdog", "watchdog", "brownout", "power_glitch", "cpu_lockup"}
 FINAL_STATES = ("success", "failed", "cancelled")
@@ -55,6 +61,7 @@ class Device(Base):
     revoked_at: Mapped[datetime | None]
     approved: Mapped[bool] = mapped_column(default=True, server_default="1")  # False: awaiting approval
     config_version: Mapped[str | None]  # version of the configuration the device reports having (#23)
+    next_checkin_s: Mapped[int | None]  # when a sleeping device said it would be back (#20)
     first_seen: Mapped[datetime] = mapped_column(default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(default=utcnow)
     channel: Mapped[str | None]  # follows this release channel automatically; None = manual updates

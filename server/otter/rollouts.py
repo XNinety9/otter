@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from . import config
 from .db import utcnow
-from .models import ACTIVE_STATES, FINAL_STATES, OPEN_STATES, Deployment, Device, Firmware, Rollout, Tag
+from .models import ACTIVE_STATES, FINAL_STATES, OPEN_STATES, Deployment, Device, Firmware, Rollout, Tag, silence_allowed
 from .versions import is_newer
 
 RUNNING, PAUSED, HALTED, COMPLETED, ABORTED = "running", "paused", "halted", "completed", "aborted"
@@ -87,8 +87,8 @@ def create(
 
     # Canaries should answer quickly: online devices first, in random order.
     random.shuffle(targets)
-    online_since = utcnow() - timedelta(seconds=config.ONLINE_TIMEOUT_S)
-    targets.sort(key=lambda d: d.last_seen < online_since)
+    now = utcnow()
+    targets.sort(key=lambda d: (now - d.last_seen).total_seconds() >= silence_allowed(config.ONLINE_TIMEOUT_S, d.next_checkin_s))
 
     sizes = stage_sizes(len(targets), stages)
     rollout = Rollout(

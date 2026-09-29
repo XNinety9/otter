@@ -7,6 +7,7 @@
 #include "driver/gpio.h"
 #include "esp_check.h"
 #include "esp_event.h"
+#include "esp_sleep.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_wifi.h"
@@ -129,7 +130,11 @@ void app_main(void)
 
     otter_config_t otter = {
         .server_url = OTTER_SERVER,
+#ifdef OTTER_DEMO_SLEEP_S
+        .app_name = "otter-sleepy",
+#else
         .app_name = "otter-demo",
+#endif
         .fleet_key = OTTER_FLEET_KEY[0] ? OTTER_FLEET_KEY : NULL,
 #ifdef OTTER_HAS_CA
         .cert_pem = OTTER_CA_PEM,
@@ -138,10 +143,24 @@ void app_main(void)
         .signing_key_pem = OTTER_SIGNING_PUBKEY_PEM,
 #endif
     };
-    ESP_ERROR_CHECK(otter_start(&otter));
     otter_register_command("identify", identify, NULL);
     otter_register_command("echo", echo, NULL);
     otter_on_config(on_config, NULL);
+
+#ifdef OTTER_DEMO_SLEEP_S
+    // A battery device (env esp32c6-sleepy): wake up, do the job, check in once, sleep. Commands,
+    // configuration and updates wait for its next wake-up, which Otter knows about.
+    if (otter_checkin_once(&otter, OTTER_DEMO_SLEEP_S) != ESP_OK) {
+        ESP_LOGW(TAG, "server unreachable, trying again at the next wake-up");
+    }
+    char greeting[32]; // the saved configuration applies even when the server is unreachable
+    otter_config_get_str("greeting", greeting, sizeof(greeting), "measuring");
+    ESP_LOGI(TAG, "%s, sleeping %d s", greeting, OTTER_DEMO_SLEEP_S);
+    vTaskDelay(pdMS_TO_TICKS(100)); // let the USB console send the last lines
+    esp_deep_sleep((uint64_t)OTTER_DEMO_SLEEP_S * 1000000);
+#endif
+
+    ESP_ERROR_CHECK(otter_start(&otter));
 
     // The device's actual work goes here, tuned by its remote configuration.
     while (true) {

@@ -6,7 +6,7 @@ restart from zero with it, as Prometheus expects.
 """
 
 from collections import Counter as Tally
-from datetime import UTC, timedelta
+from datetime import UTC
 
 from prometheus_client import (
     CollectorRegistry,
@@ -21,7 +21,7 @@ from sqlalchemy import event, func, select
 
 from . import config
 from .db import SessionLocal, utcnow
-from .models import FINAL_STATES, Deployment, Device, Firmware
+from .models import FINAL_STATES, Deployment, Device, Firmware, silence_allowed
 
 disable_created_metrics()  # no *_created series: noise in dashboards
 
@@ -44,18 +44,25 @@ def _count_outcome(target, value, oldvalue, initiator):
         OUTCOMES.labels(value).inc()
 
 
+def online(d, now) -> bool:
+    return (now - d.last_seen).total_seconds() < silence_allowed(config.ONLINE_TIMEOUT_S, d.next_checkin_s)
+
+
 class FleetCollector:
     def collect(self):
-        online_since = utcnow() - timedelta(seconds=config.ONLINE_TIMEOUT_S)
+        now = utcnow()
         with SessionLocal() as session:
             devices = session.execute(
-                select(Device.mac, Device.name, Device.app, Device.hw, Device.fw_version, Device.last_seen)
+                select(
+                    Device.mac, Device.name, Device.app, Device.hw, Device.fw_version, Device.last_seen,
+                    Device.next_checkin_s,
+                )
             ).all()
             deployments = session.execute(select(Deployment.status, func.count()).group_by(Deployment.status)).all()
             firmwares = session.scalar(select(func.count(Firmware.id)))
 
         by_group = Tally(
-            (d.app, d.hw, d.fw_version, "true" if d.last_seen >= online_since else "false") for d in devices
+            (d.app, d.hw, d.fw_version, "true" if online(d, now) else "false") for d in devices
         )
         fleet = GaugeMetricFamily(
             "otter_devices", "Known devices", labels=["app", "hw", "version", "online"]

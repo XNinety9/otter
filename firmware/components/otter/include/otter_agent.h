@@ -44,6 +44,14 @@ typedef struct {
  * Networking must be initialized; the agent retries until the server is reachable. */
 esp_err_t otter_start(const otter_config_t *config);
 
+/* For devices that sleep between check-ins (deep sleep), instead of otter_start(): checks in
+ * once, without long polling, runs the commands, applies the configuration and any pending
+ * update (which restarts the device into it), then returns. next_checkin_s is when the device
+ * will check in again, so Otter doesn't show it offline meanwhile. A new firmware that can't
+ * reach the server for 3 wake-ups in a row is rolled back. Networking must be up. Returns
+ * ESP_FAIL when the server couldn't be reached. */
+esp_err_t otter_checkin_once(const otter_config_t *config, uint32_t next_checkin_s);
+
 /* Confirms the running firmware so the bootloader won't roll it back. */
 esp_err_t otter_mark_valid(void);
 

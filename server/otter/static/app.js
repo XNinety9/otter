@@ -63,8 +63,14 @@ function ago(iso) {
   return `${Math.floor(s / 86400)} d ago`;
 }
 
+// Same rule as the server: a device that said it would sleep may stay silent that long.
+function silenceAllowed(d) {
+  const base = state.interval * 2.5 + 5;
+  return d.next_checkin_s ? Math.max(base, d.next_checkin_s * 1.25 + 60) : base;
+}
+
 function isOnline(d) {
-  return Date.now() - Date.parse(d.last_seen) < (state.interval * 2.5 + 5) * 1000;
+  return Date.now() - Date.parse(d.last_seen) < silenceAllowed(d) * 1000;
 }
 
 // --- Device credentials (per-device tokens) ---------------------------------------
@@ -669,6 +675,7 @@ function renderPanel() {
     ["MAC", d.mac],
     ["Signal", d.rssi == null ? "—" : `${d.rssi} dBm`],
     ["Uptime", uptime(d.uptime_s)],
+    ["Check-ins", d.next_checkin_s ? `sleeps, wakes every ${d.next_checkin_s < 120 ? `${d.next_checkin_s} s` : uptime(d.next_checkin_s)}` : "stays connected"],
     ["Last reset", lastReset(d), crashed(d) ? "crash" : ""],
     ["Free heap", d.free_heap == null ? "—" : `${bytes(d.free_heap)}${d.min_free_heap == null ? "" : ` · min ${bytes(d.min_free_heap)}`}`],
     ["Last seen", `${ago(d.last_seen)} · ${isOnline(d) ? "online" : "offline"}`],

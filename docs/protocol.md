@@ -60,6 +60,7 @@ Content-Type: application/json
   "reset_reason": "power_on",     // optional, why the device last restarted (see below)
   "boot_count": 17,               // optional, incremented at each boot
   "config_version": "5dd2cdab1550ab80", // optional, remote configuration it has ("" = none)
+  "next_checkin_s": 600,          // optional, a sleeping device: when it will be back (see below)
   "wait_s": 30                    // optional, long polling (see below)
 }
 ```
@@ -124,6 +125,14 @@ The device applies it, keeps it (the ESP-IDF agent in NVS, so it applies from bo
 offline) and checks in again right away with the new `config_version`, which the dashboard
 shows as "in sync". Values are strings, numbers or booleans; keys `[a-z][a-z0-9_]{0,31}`; at
 most 32 keys and 2 KB per device or tag. Agents that don't send `config_version` never get any.
+
+### Sleeping devices
+
+A battery device that deep-sleeps between check-ins sends `wait_s: 0` and `next_checkin_s`,
+the time until its next wake-up. It counts as online until then (plus a margin: 25 % and a
+minute), so it isn't reported offline while asleep. Deployments, commands and configuration
+changes wait for its next check-in. Without `next_checkin_s`, a device is expected every
+`checkin_interval_s`.
 
 ### Long polling
 

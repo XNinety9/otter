@@ -113,6 +113,7 @@ def record_checkin(
             device.token_hash = token_hash(token)
 
         device.config_version = body.config_version
+        device.next_checkin_s = body.next_checkin_s
         config_order = None
         if body.config_version is not None:
             values, _ = devconfig.effective(session, device)

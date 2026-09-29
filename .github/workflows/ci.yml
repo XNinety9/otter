@@ -43,6 +43,7 @@ jobs:
         include:
           - { project: esp32-idf, env: esp32 }
           - { project: esp32-idf, env: esp32c6 }
+          - { project: esp32-idf, env: esp32c6-sleepy }
           - { project: arduino, env: esp8266 }
           - { project: arduino, env: esp32 }
     env:

@@ -52,6 +52,9 @@ class CheckinIn(BaseModel):
     # Version of the remote configuration the device has ("" = none). Agents that support
     # remote configuration always send it; the others never get any.
     config_version: str | None = Field(default=None, max_length=64)
+    # A device that sleeps between check-ins (deep sleep) says when it will be back, so it
+    # doesn't count as offline meanwhile. Omitted: it checks in every checkin_interval_s.
+    next_checkin_s: int | None = Field(default=None, ge=1, le=7 * 86400)
     # Long polling: if no update is ready, the server may hold the request up to this long.
     wait_s: int = Field(default=0, ge=0)
 
@@ -220,6 +223,7 @@ class DeviceOut(BaseModel):
     boot_count: int | None = None
     auth: str = "fleet_key"
     config_version: str | None = None
+    next_checkin_s: int | None = None
     first_seen: UtcDatetime
     last_seen: UtcDatetime
     last_deployment: DeploymentOut | None
