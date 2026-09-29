@@ -13,7 +13,7 @@ from .api_device import publish_device
 from .db import get_session
 from .events import broadcaster, wakeups
 from .models import ACTIVE_STATES, Deployment, Device, Firmware
-from .schemas import DeployIn, DeviceOut, DevicePatch, FirmwareOut
+from .schemas import DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut
 from .storage import delete_firmware_file, store_firmware
 
 router = APIRouter(prefix="/api", tags=["ui"])
@@ -30,6 +30,14 @@ def get_config():
 @router.get("/devices", response_model=list[DeviceOut])
 def list_devices(session: Session = Depends(get_session)):
     return session.scalars(select(Device).order_by(Device.app, Device.name, Device.mac)).all()
+
+
+@router.get("/devices/{device_id}/deployments", response_model=list[DeploymentOut])
+def device_deployments(device_id: int, limit: int = 100, session: Session = Depends(get_session)):
+    session.get(Device, device_id) or _404("device")
+    return session.scalars(
+        select(Deployment).where(Deployment.device_id == device_id).order_by(Deployment.id.desc()).limit(limit)
+    ).all()
 
 
 @router.patch("/devices/{device_id}", response_model=DeviceOut)

@@ -67,7 +67,7 @@ function createRow(id) {
   tr.dataset.id = id;
   tr.innerHTML = `
     <td class="check"><input type="checkbox" class="sel" aria-label="Select"></td>
-    <td><button class="name link" title="Rename"></button><div class="mac mono muted"></div></td>
+    <td><button class="name link" title="Details and history"></button><div class="mac mono muted"></div></td>
     <td><span class="app"></span> <span class="hw tag"></span></td>
     <td class="fw mono"></td>
     <td class="ip mono"></td>
@@ -83,22 +83,26 @@ function createRow(id) {
     e.target.checked ? state.selected.add(id) : state.selected.delete(id);
     renderToolbar();
   });
-  $(".name", tr).addEventListener("click", async () => {
-    const d = state.devices.get(id);
-    const name = prompt(`Name for ${d.mac}`, d.name || "");
-    if (name === null) return;
-    try { await api("PATCH", `/api/devices/${id}`, { name }); } catch (e) { toast(e.message, "err"); }
-  });
+  $(".name", tr).addEventListener("click", () => openPanel(id));
   $(".cancel", tr).addEventListener("click", async () => {
     const dep = state.devices.get(id).last_deployment;
     try { await api("POST", `/api/deployments/${dep.id}/cancel`); } catch (e) { toast(e.message, "err"); }
   });
-  $(".forget", tr).addEventListener("click", async () => {
-    const d = state.devices.get(id);
-    if (!confirm(`Forget ${label(d)}? It will reappear at its next check-in.`)) return;
-    try { await api("DELETE", `/api/devices/${id}`); } catch (e) { toast(e.message, "err"); }
-  });
+  $(".forget", tr).addEventListener("click", () => forgetDevice(id));
   return tr;
+}
+
+async function renameDevice(id) {
+  const d = state.devices.get(id);
+  const name = prompt(`Name for ${d.mac}`, d.name || "");
+  if (name === null) return;
+  try { await api("PATCH", `/api/devices/${id}`, { name }); } catch (e) { toast(e.message, "err"); }
+}
+
+async function forgetDevice(id) {
+  const d = state.devices.get(id);
+  if (!confirm(`Forget ${label(d)}? It will reappear at its next check-in.`)) return;
+  try { await api("DELETE", `/api/devices/${id}`); } catch (e) { toast(e.message, "err"); }
 }
 
 function updateStatusText(d) {
@@ -218,6 +222,91 @@ async function deploy(firmwareId, deviceIds) {
   }
 }
 
+// --- Device panel ------------------------------------------------------------
+
+const panel = $("#device-panel");
+let panelDeviceId = null;
+let panelHistoryKey = null;
+
+function openPanel(id) {
+  panelDeviceId = id;
+  panelHistoryKey = null;
+  $(".history tbody", panel).innerHTML = "";
+  renderPanel();
+  panel.showModal();
+}
+
+function duration(from, to) {
+  const s = Math.max(0, Math.round((Date.parse(to) - Date.parse(from)) / 1000));
+  if (s < 60) return `${s} s`;
+  if (s < 3600) return `${Math.floor(s / 60)} min ${s % 60} s`;
+  return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+}
+
+function uptime(s) {
+  if (s == null) return "—";
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
+}
+
+function renderPanel() {
+  const d = state.devices.get(panelDeviceId);
+  if (!d) return panel.close();
+  $("#panel-title").textContent = label(d);
+  $(".panel-sub", panel).textContent = d.name ? d.mac : "";
+  const info = [
+    ["App", d.app],
+    ["Hardware", d.hw],
+    ["Firmware", d.fw_version],
+    ["IP", d.ip || "—"],
+    ["MAC", d.mac],
+    ["Signal", d.rssi == null ? "—" : `${d.rssi} dBm`],
+    ["Uptime", uptime(d.uptime_s)],
+    ["Last seen", `${ago(d.last_seen)} · ${isOnline(d) ? "online" : "offline"}`],
+    ["First seen", new Date(d.first_seen).toLocaleString()],
+  ];
+  $(".info", panel).innerHTML = info.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
+
+  // Refetch the history only when the latest deployment changes state.
+  const dep = d.last_deployment;
+  const key = dep ? `${dep.id}:${dep.status}` : "";
+  if (key !== panelHistoryKey) {
+    panelHistoryKey = key;
+    loadHistory(d.id);
+  }
+}
+
+async function loadHistory(id) {
+  let history;
+  try {
+    history = await api("GET", `/api/devices/${id}/deployments`);
+  } catch (e) {
+    return toast(e.message, "err");
+  }
+  if (id !== panelDeviceId) return;
+  $(".history tbody", panel).innerHTML = history.map((h) => `
+    <tr>
+      <td class="mono">${esc(h.firmware.version)}</td>
+      <td><span class="badge ${esc(h.status)}">${esc(h.status)}</span></td>
+      <td title="${esc(new Date(h.created_at).toLocaleString())}">${ago(h.created_at)}</td>
+      <td>${ACTIVE.has(h.status) ? "—" : duration(h.created_at, h.updated_at)}</td>
+      <td class="details">${esc(h.error)}</td>
+    </tr>`).join("");
+  $(".history-empty", panel).hidden = history.length > 0;
+}
+
+$(".close", panel).addEventListener("click", () => panel.close());
+$(".rename", panel).addEventListener("click", () => renameDevice(panelDeviceId));
+$(".forget", panel).addEventListener("click", () => forgetDevice(panelDeviceId));
+panel.addEventListener("click", (e) => {
+  // Clicks on the backdrop land on the dialog itself, outside its box.
+  const r = panel.getBoundingClientRect();
+  if (e.target === panel && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) {
+    panel.close();
+  }
+});
+panel.addEventListener("close", () => { panelDeviceId = null; });
+
 // --- Firmwares ---------------------------------------------------------------
 
 function renderFirmwares() {
@@ -301,6 +390,10 @@ async function resync() {
   renderDevices();
   renderFirmwares();
   renderToolbar();
+  if (panelDeviceId !== null) {
+    panelHistoryKey = null;  // may have missed events while disconnected
+    renderPanel();
+  }
 }
 
 function announce(prev, d) {
@@ -329,11 +422,13 @@ function connect() {
     state.devices.set(d.id, d);
     renderDevices();
     renderToolbar();
+    if (d.id === panelDeviceId) renderPanel();
   });
   es.addEventListener("device_deleted", (e) => {
     const { id } = JSON.parse(e.data);
     state.devices.delete(id);
     state.selected.delete(id);
+    if (id === panelDeviceId) panel.close();
     renderDevices();
     renderToolbar();
   });
@@ -352,6 +447,7 @@ setInterval(() => {
     if (d) refreshSeen(tr, d);
   }
   renderSummary();
+  if (panelDeviceId !== null) renderPanel();
 }, 1000);
 
 connect();
