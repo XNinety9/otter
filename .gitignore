@@ -10,3 +10,4 @@ managed_components/
 sdkconfig.*
 !sdkconfig.defaults
 .env
+_site/
