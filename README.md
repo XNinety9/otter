@@ -1,4 +1,8 @@
-# 🦦 Otter
+<p align="center">
+  <img src="docs/logo_readme.png" alt="Otter" width="240">
+</p>
+
+# Otter
 
 [![CI](https://github.com/XNinety9/otter/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/XNinety9/otter/actions/workflows/ci.yml)
 
