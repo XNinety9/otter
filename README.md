@@ -317,6 +317,19 @@ set `OTTER_RUNNER`. The images embed your Wi-Fi password: they are built and upl
 and never stored as workflow artifacts or release assets, which anyone can download on a public
 repository. Without Wi-Fi settings, nothing is uploaded.
 
+## Troubleshooting
+
+**Updates crawl at a few KB/s and stall, with the server running outside Docker.** Check
+`sysctl net.ipv4.tcp_mtu_probing`. With `1` (some distributions set it, e.g. Omarchy), Linux
+takes the packet losses of a weak Wi-Fi link for an MTU problem and shrinks the segments it
+sends, down to about a tenth of their size (`ss -ti` shows `mss:144` instead of `mss:1440` on
+the download connection). Run Otter in Docker, whose network namespace uses the kernel default
+(`0`), or set it back to `0` on the host.
+
+**Devices on a weak link.** The ESP-IDF agent resumes a stalled download where it stopped
+(see [Firmware download](docs/protocol.md#3-firmware-download)); the `Signal` column and the
+device panel show how weak the link is. Below about -80 dBm, expect retries.
+
 ## Tests
 
 ```sh
