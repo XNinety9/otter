@@ -98,7 +98,8 @@ OTTER_DOMAIN=otter.example.com OTTER_TLS=you@example.com \
   redirects to HTTPS). `OTTER_PUBLIC_URL` defaults to `https://$OTTER_DOMAIN`. With other ports
   (`OTTER_HTTP_PORT`, `OTTER_HTTPS_PORT`), set `OTTER_PUBLIC_URL` to include the port.
 - `OTTER_DOMAIN` must be the name devices and browsers use, resolvable on your network (router DNS,
-  `/etc/hosts`…).
+  `/etc/hosts`…). Without a DNS name, the host's IP address works too with the local CA
+  (`OTTER_DOMAIN=192.168.1.10`, devices use `https://192.168.1.10`).
 - With Caddy's local CA, browsers and devices must trust its root certificate:
 
     ```sh
@@ -106,8 +107,13 @@ OTTER_DOMAIN=otter.example.com OTTER_TLS=you@example.com \
       cp caddy:/data/caddy/pki/authorities/local/root.crt otter-ca.pem
     ```
 
-    Import `otter-ca.pem` in your browser or system trust store, and give it to the devices
-    (`cert_pem` of the ESP-IDF agent). The simulator takes it with `--ca otter-ca.pem`.
+    Import `otter-ca.pem` in your browser or system trust store, and build it into the devices:
+    `OTTER_CA_CERT=/path/to/otter-ca.pem` when building the ESP-IDF example (or `cert_pem` of
+    the agent in your own firmware). `tools/release.sh` reads the same variable for its uploads,
+    `tools/push.sh` needs `CURL_CA_BUNDLE=otter-ca.pem`, and the simulator takes `--ca otter-ca.pem`.
+    With Let's Encrypt, devices need nothing: the ESP-IDF certificate bundle trusts it.
+    The local CA's root certificate is valid for 10 years; renewing Caddy's short-lived
+    certificates doesn't concern devices.
 
 - Without Docker, any TLS reverse proxy works. Uvicorn only trusts `X-Forwarded-*` headers from
   `127.0.0.1` by default; if the proxy runs elsewhere, set `FORWARDED_ALLOW_IPS` to its address,

@@ -109,6 +109,12 @@ GET /api/v1/firmwares/{id}/download
 Returns the raw `.bin` image. The device must verify the SHA-256 of what it wrote
 against `update.sha256` before switching boot partitions.
 
+A device can resume an interrupted download with `Range: bytes=<offset>-`: the server answers
+`206 Partial Content` with the rest of the image. On a weak Wi-Fi link, a connection that
+stops receiving data for a few seconds rarely recovers (the server's TCP waits twice as long
+after each loss), so the ESP-IDF agent opens a new one after 8 s of silence and resumes where it
+stopped, up to 10 times per attempt, instead of starting over.
+
 ## Agent loop (reference)
 
 ```
@@ -132,8 +138,8 @@ What protects what, and what doesn't yet:
 
 | Threat | Plain HTTP | HTTPS (server) | Status |
 |---|---|---|---|
-| Someone on the network reads the fleet key, device data, or dashboard passwords and cookies | **exposed** | protected | HTTPS: [#17](https://github.com/XNinety9/otter/issues/17) |
-| Someone on the network (e.g. ARP spoofing) serves a malicious firmware | **exposed**: `sha256` comes through the same channel, it only detects corruption | protected, **if the device verifies the certificate** | HTTPS: #17 |
+| Someone on the network reads the fleet key, device data, or dashboard passwords and cookies | **exposed** | protected | HTTPS: ESP-IDF done, Arduino to do ([#17](https://github.com/XNinety9/otter/issues/17)) |
+| Someone on the network (e.g. ARP spoofing) serves a malicious firmware | **exposed**: `sha256` comes through the same channel, it only detects corruption | protected, **if the device verifies the certificate** | HTTPS: ESP-IDF done, Arduino to do (#17) |
 | The server itself, or its storage, is compromised and serves a malicious firmware | exposed | exposed | signed firmware: [#18](https://github.com/XNinety9/otter/issues/18) |
 | A device's key is extracted from its flash | the shared fleet key opens every device's API | same | per-device tokens: [#15](https://github.com/XNinety9/otter/issues/15) |
 
@@ -143,8 +149,10 @@ Deployment options:
   Otter, with Let's Encrypt for a public domain or Caddy's own CA on a LAN, and stops publishing
   Otter's plain-HTTP port (see "HTTPS" in the README).
 - **ESP-IDF agent**: use an `https://` server URL and give the CA certificate in
-  `otter_config_t.cert_pem`. Without it, the ESP-IDF certificate bundle is used, which covers
-  public certificates such as Let's Encrypt but not a private CA. *Not yet validated on hardware.*
+  `otter_config_t.cert_pem` (the example takes it from `OTTER_CA_CERT` at build time). Without
+  it, the ESP-IDF certificate bundle is used, which covers public certificates such as Let's
+  Encrypt but not a private CA. Validated on an ESP32-C6 with Caddy's local CA: check-ins and
+  OTA updates over HTTPS, at the same speed as plain HTTP (~220 KB/s).
 - **Arduino library**: plain HTTP only for now (#17).
 
 Devices must verify the server's certificate: TLS without verification still lets anyone on

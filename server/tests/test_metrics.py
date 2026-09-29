@@ -55,3 +55,24 @@ def test_event_counters(client, checkin, upload):
     assert delta("otter_deployment_outcomes_total", status="success") == 1
     assert value(after, "otter_deployments", status="success") == 1
     assert value(after, "otter_deployments", status="cancelled") == 1
+
+
+def test_resumed_download(client, checkin, upload):
+    """A device resuming a stalled download gets the rest of the image, counted once."""
+    checkin()
+    fw = upload("1.1.0")
+    client.post("/api/deployments", json={"firmware_id": fw["id"], "device_ids": [device_id(client)]})
+    url = checkin()["update"]["url"]
+    before = scrape(client)
+    full = client.get(url)
+    rest = client.get(url, headers={"Range": "bytes=1000-"})
+    after = scrape(client)
+
+    assert rest.status_code == 206
+    assert rest.content == full.content[1000:]
+    assert value(after, "otter_firmware_downloads_total", app="weather", version="1.1.0") - value(
+        before, "otter_firmware_downloads_total", app="weather", version="1.1.0"
+    ) == 1
+    assert value(after, "otter_firmware_download_bytes_total") - value(
+        before, "otter_firmware_download_bytes_total"
+    ) == 2 * fw["size"] - 1000

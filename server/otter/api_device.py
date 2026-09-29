@@ -1,6 +1,7 @@
 """Endpoints called by devices. See docs/protocol.md."""
 
 import asyncio
+import re
 import secrets
 from datetime import timedelta
 
@@ -149,12 +150,16 @@ def report_progress(deployment_id: int, body: ProgressIn, session: Session = Dep
 
 
 @router.get("/firmwares/{firmware_id}/download")
-def download_firmware(firmware_id: int, session: Session = Depends(get_session)):
+def download_firmware(firmware_id: int, request: Request, session: Session = Depends(get_session)):
+    """The whole image, or its end with `Range: bytes=<offset>-` when a device resumes a stalled download."""
     fw = session.get(Firmware, firmware_id)
     if fw is None:
         raise HTTPException(404, "unknown firmware")
-    DOWNLOADS.labels(fw.app, fw.version).inc()
-    DOWNLOAD_BYTES.inc(fw.size)
+    resume = re.fullmatch(r"bytes=(\d+)-", request.headers.get("range", ""))
+    offset = min(int(resume.group(1)), fw.size) if resume else 0
+    if offset == 0:
+        DOWNLOADS.labels(fw.app, fw.version).inc()
+    DOWNLOAD_BYTES.inc(fw.size - offset)
     return FileResponse(
         firmware_path(fw.sha256),
         media_type="application/octet-stream",

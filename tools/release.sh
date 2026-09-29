@@ -5,13 +5,15 @@
 # Apps, their PlatformIO project and the hardware of each environment: firmware/apps.json.
 # Builds are clean, and each image is checked to embed <version>.
 #
-# Build settings, baked into the firmware: WIFI_SSID, WIFI_PASS, OTTER_SERVER, OTTER_FLEET_KEY.
+# Build settings, baked into the firmware: WIFI_SSID, WIFI_PASS, OTTER_SERVER, OTTER_FLEET_KEY,
+# and OTTER_CA_CERT: a private CA certificate (PEM, or the path to one) that devices and the
+# upload trust, e.g. Caddy's local CA for an https:// server.
 # Upload happens when OTTER_TOKEN is set: to OTTER_PUSH_URL (default OTTER_SERVER), on the
-# channel OTTER_CHANNEL if set. OTTER_CA_CERT may hold a PEM certificate to trust (private CA).
+# channel OTTER_CHANNEL if set.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-[ $# -eq 2 ] || { sed -n 2,11p "$0"; exit 1; }
+[ $# -eq 2 ] || { sed -n 2,12p "$0"; exit 1; }
 app=$1 version=$2
 [[ $version =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || { echo "invalid version: $version" >&2; exit 1; }
 
@@ -32,8 +34,12 @@ if [ -n "${OTTER_TOKEN:-}" ]; then
   [ -n "${WIFI_SSID:-}" ] && [ -n "${OTTER_SERVER:-}" ] \
     || { echo "refusing to upload: WIFI_SSID and OTTER_SERVER must be set for a real build" >&2; exit 1; }
   [ -n "$push_url" ] || { echo "OTTER_TOKEN is set but there is no OTTER_PUSH_URL/OTTER_SERVER" >&2; exit 1; }
-  if [ -n "${OTTER_CA_CERT:-}" ]; then
+fi
+if [ -n "${OTTER_CA_CERT:-}" ]; then
+  if [[ $OTTER_CA_CERT == *"-----BEGIN"* ]]; then
     export CURL_CA_BUNDLE=$(mktemp); printf '%s\n' "$OTTER_CA_CERT" > "$CURL_CA_BUNDLE"
+  else
+    export OTTER_CA_CERT=$(realpath "$OTTER_CA_CERT") CURL_CA_BUNDLE=$(realpath "$OTTER_CA_CERT")
   fi
 fi
 

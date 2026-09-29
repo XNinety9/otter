@@ -30,6 +30,10 @@
 #define CHUNK_SIZE 4096
 #define RETRY_DELAY_S 10
 #define HTTP_TIMEOUT_MS 15000
+/* A download receiving nothing for this long reconnects and resumes, at most MAX_RESUMES
+ * times per attempt. */
+#define STALL_TIMEOUT_MS 8000
+#define MAX_RESUMES 10
 #define MAX_WAIT_S 60
 
 static const char *TAG = "otter";
@@ -67,16 +71,23 @@ static esp_http_client_handle_t new_client(const char *url, esp_http_client_meth
 }
 
 /* POSTs a JSON body to server_url + path. Returns the HTTP status, or -1 on network
- * error. The response body is stored in resp when given. */
-static int post_json(const char *path, const char *body, char *resp, size_t resp_size, int timeout_ms)
+ * error. The response body is stored in resp when given. With keep, the connection is
+ * kept open in *keep for the next call (close it with close_kept()). */
+static int post_json(const char *path, const char *body, char *resp, size_t resp_size, int timeout_ms,
+                     esp_http_client_handle_t *keep)
 {
     char url[256];
     snprintf(url, sizeof(url), "%s%s", s_cfg.server_url, path);
-    esp_http_client_handle_t client = new_client(url, HTTP_METHOD_POST, timeout_ms);
+    bool reused = keep && *keep;
+    esp_http_client_handle_t client = reused ? *keep : new_client(url, HTTP_METHOD_POST, timeout_ms);
     if (!client) {
         return -1;
     }
-    esp_http_client_set_header(client, "Content-Type", "application/json");
+    if (reused) {
+        esp_http_client_set_url(client, url);
+    } else {
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+    }
 
     int status = -1;
     int len = strlen(body);
@@ -86,13 +97,39 @@ static int post_json(const char *path, const char *body, char *resp, size_t resp
             if (resp) {
                 int n = esp_http_client_read_response(client, resp, resp_size - 1);
                 resp[n > 0 ? n : 0] = '\0';
+            } else {
+                esp_http_client_flush_response(client, NULL);
             }
         }
-        esp_http_client_close(client);
     }
+    if (keep && status > 0) {
+        *keep = client;
+        return status;
+    }
+    esp_http_client_close(client);
     esp_http_client_cleanup(client);
+    if (keep) {
+        *keep = NULL;
+    }
+    if (reused) {
+        /* The server may have closed the idle connection: once more on a fresh one. */
+        return post_json(path, body, resp, resp_size, timeout_ms, keep);
+    }
     return status;
 }
+
+static void close_kept(esp_http_client_handle_t *keep)
+{
+    if (*keep) {
+        esp_http_client_close(*keep);
+        esp_http_client_cleanup(*keep);
+        *keep = NULL;
+    }
+}
+
+/* Progress reports during an update share one connection: over TLS, a new handshake
+ * takes about a second, during which the download isn't read and its TCP window closes. */
+static esp_http_client_handle_t s_report_conn;
 
 /* Best-effort progress report. Returns false when the server asks to abort (409). */
 static bool report(int deployment_id, const char *state, int progress, const char *error)
@@ -109,7 +146,7 @@ static bool report(int deployment_id, const char *state, int progress, const cha
     char *body = cJSON_PrintUnformatted(obj);
     cJSON_Delete(obj);
 
-    int status = post_json(path, body, NULL, 0, HTTP_TIMEOUT_MS);
+    int status = post_json(path, body, NULL, 0, HTTP_TIMEOUT_MS, &s_report_conn);
     free(body);
     if (status != 200) {
         ESP_LOGW(TAG, "progress report got HTTP %d", status);
@@ -184,7 +221,7 @@ static bool checkin(update_order_t *order)
         return false;
     }
 
-    int status = post_json("/api/v1/checkin", body, resp, RESPONSE_MAX, checkin_wait_s() * 1000 + HTTP_TIMEOUT_MS);
+    int status = post_json("/api/v1/checkin", body, resp, RESPONSE_MAX, checkin_wait_s() * 1000 + HTTP_TIMEOUT_MS, NULL);
     free(body);
 
     bool reached = false;
@@ -219,12 +256,42 @@ static bool checkin(update_order_t *order)
 
 /* --- OTA ------------------------------------------------------------------ */
 
+/* Opens the firmware URL, from byte offset on when resuming. Returns NULL on success,
+ * or the error to report. */
+static const char *open_download(const char *url, int offset, esp_http_client_handle_t *out)
+{
+    /* One timeout for everything: over TLS, reads wait on the socket timeout set here. */
+    esp_http_client_handle_t client = new_client(url, HTTP_METHOD_GET, STALL_TIMEOUT_MS);
+    if (!client) {
+        return "out of memory";
+    }
+    if (offset > 0) {
+        char range[32];
+        snprintf(range, sizeof(range), "bytes=%d-", offset);
+        esp_http_client_set_header(client, "Range", range);
+    }
+    const char *err = NULL;
+    if (esp_http_client_open(client, 0) != ESP_OK || esp_http_client_fetch_headers(client) < 0) {
+        err = "cannot reach firmware URL";
+    } else if (esp_http_client_get_status_code(client) != (offset > 0 ? 206 : 200)) {
+        err = "firmware download refused";
+    }
+    if (err) {
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return err;
+    }
+    *out = client;
+    return NULL;
+}
+
 static void apply_update(const update_order_t *order)
 {
     const int dep = order->deployment_id;
     ESP_LOGI(TAG, "updating %s -> %s (%d bytes)", s_cfg.version, order->version, order->size);
     if (!report(dep, "downloading", 0, NULL)) {
         ESP_LOGW(TAG, "update cancelled by server");
+        close_kept(&s_report_conn);
         return;
     }
 
@@ -270,27 +337,44 @@ static void apply_update(const update_order_t *order)
         ps_changed = esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK;
     }
 
-    client = new_client(order->url, HTTP_METHOD_GET, HTTP_TIMEOUT_MS);
-    if (!client || esp_http_client_open(client, 0) != ESP_OK) {
-        err = "cannot reach firmware URL";
-        goto done;
-    }
-    esp_http_client_fetch_headers(client);
-    if (esp_http_client_get_status_code(client) != 200) {
-        err = "firmware download refused";
-        goto done;
-    }
-    ESP_LOGI(TAG, "flash erase took %lld ms, headers after %lld ms", (t_connect - t_start) / 1000,
-             (esp_timer_get_time() - t_connect) / 1000);
+    ESP_LOGI(TAG, "flash erase took %lld ms", (t_connect - t_start) / 1000);
 
-    int64_t t_slice = esp_timer_get_time(), t_last_read = t_slice, max_gap = 0;
-    int slice_start = 0;
+    int64_t t_slice = 0, t_last_read = 0, max_gap = 0;
+    int slice_start = 0, connections = 0;
 
     while (received < order->size) {
+        if (!client) {
+            /* On a lossy link a stalled connection rarely recovers, as the server's TCP
+             * waits twice as long after each loss: a new one starts afresh, from where we are. */
+            if (connections++ > MAX_RESUMES) {
+                if (!err) { /* else the last connection couldn't even open: report why */
+                    err = "connection lost";
+                }
+                goto done;
+            }
+            if (connections > 1) {
+                ESP_LOGW(TAG, "download stalled at %d bytes, resuming (%d/%d)", received, connections - 1,
+                         MAX_RESUMES);
+            }
+            err = open_download(order->url, received, &client);
+            if (err && strcmp(err, "firmware download refused") == 0) {
+                goto done;
+            } else if (err) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                continue;
+            }
+            if (connections == 1) {
+                ESP_LOGI(TAG, "headers after %lld ms", (esp_timer_get_time() - t_connect) / 1000);
+                t_slice = esp_timer_get_time();
+            }
+            t_last_read = esp_timer_get_time();
+        }
         int n = esp_http_client_read(client, buf, CHUNK_SIZE);
         if (n <= 0) {
-            err = "connection lost";
-            goto done;
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            client = NULL;
+            continue;
         }
         if (received + n > order->size) {
             err = "image larger than announced";
@@ -367,15 +451,17 @@ done:
 
     if (cancelled) {
         ESP_LOGW(TAG, "update cancelled by server");
-        return;
-    }
-    if (err) {
+    } else if (err) {
         ESP_LOGE(TAG, "update failed: %s", err);
         report(dep, "failed", 0, err);
+    } else {
+        report(dep, "rebooting", 100, NULL);
+    }
+    close_kept(&s_report_conn);
+    if (cancelled || err) {
         return;
     }
 
-    report(dep, "rebooting", 100, NULL);
     ESP_LOGI(TAG, "update written, rebooting into %s", order->version);
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
