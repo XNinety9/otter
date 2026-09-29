@@ -119,6 +119,7 @@ def record_checkin(
                     url=f"{base}/api/v1/firmwares/{fw.id}/download",
                     size=fw.size,
                     sha256=fw.sha256,
+                    signature=fw.signature,
                 )
 
         sent, expired = commands.deliver(device)

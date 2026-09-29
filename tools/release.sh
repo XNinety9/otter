@@ -8,12 +8,14 @@
 # Build settings, baked into the firmware: WIFI_SSID, WIFI_PASS, OTTER_SERVER, OTTER_FLEET_KEY,
 # and OTTER_CA_CERT: a private CA certificate (PEM, or the path to one) that devices and the
 # upload trust, e.g. Caddy's local CA for an https:// server.
+# OTTER_SIGNING_KEY (private key PEM, or the path to one): images are signed with it, and built
+# to accept only images signed with it (see "Signed firmware" in the README).
 # Upload happens when OTTER_TOKEN is set: to OTTER_PUSH_URL (default OTTER_SERVER), on the
 # channel OTTER_CHANNEL if set.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-[ $# -eq 2 ] || { sed -n 2,12p "$0"; exit 1; }
+[ $# -eq 2 ] || { sed -n 2,14p "$0"; exit 1; }
 app=$1 version=$2
 [[ $version =~ ^[0-9A-Za-z.+-]{1,32}$ ]] || { echo "invalid version: $version" >&2; exit 1; }
 
@@ -41,6 +43,18 @@ if [ -n "${OTTER_CA_CERT:-}" ]; then
   else
     export OTTER_CA_CERT=$(realpath "$OTTER_CA_CERT") CURL_CA_BUNDLE=$(realpath "$OTTER_CA_CERT")
   fi
+fi
+
+if [ -n "${OTTER_SIGNING_KEY:-}" ]; then
+  if [[ $OTTER_SIGNING_KEY == *"-----BEGIN"* ]]; then
+    key_file=$(mktemp); chmod 600 "$key_file"; trap 'rm -f "$key_file"' EXIT
+    printf '%s\n' "$OTTER_SIGNING_KEY" > "$key_file"
+    export OTTER_SIGNING_KEY=$key_file
+  else
+    export OTTER_SIGNING_KEY=$(realpath "$OTTER_SIGNING_KEY")
+  fi
+  # The firmware embeds the matching public key: devices then refuse anything else.
+  export OTTER_SIGNING_PUBKEY=$(openssl pkey -in "$OTTER_SIGNING_KEY" -pubout)
 fi
 
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}

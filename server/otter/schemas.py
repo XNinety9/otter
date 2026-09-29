@@ -67,6 +67,7 @@ class UpdateOrder(BaseModel):
     url: str
     size: int
     sha256: str
+    signature: str | None = None  # base64 signature of the image, when it was signed
 
 
 class CommandOrder(BaseModel):
@@ -141,6 +142,7 @@ class FirmwareOut(BaseModel):
     notes: str | None
     uploaded_at: UtcDatetime
     channel: str | None = None
+    signed: bool = False
 
 
 class DeploymentOut(BaseModel):

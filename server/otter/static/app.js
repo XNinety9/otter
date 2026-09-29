@@ -694,7 +694,7 @@ function renderFirmwares() {
     <tr data-id="${f.id}">
       <td>${esc(f.app)}</td>
       <td><span class="tag">${esc(f.hw)}</span></td>
-      <td class="mono">${esc(f.version)}</td>
+      <td class="mono">${esc(f.version)}${f.signed ? ` <span class="signed" title="Signed: devices built with the public key check it">🔏</span>` : ""}</td>
       <td>${bytes(f.size)}</td>
       <td class="mono muted" title="${esc(f.sha256)}">${esc(f.sha256.slice(0, 12))}…</td>
       <td title="${esc(new Date(f.uploaded_at).toLocaleString())}">${ago(f.uploaded_at)}</td>

@@ -14,7 +14,8 @@
 #include "freertos/event_groups.h"
 #include "nvs_flash.h"
 #include "otter_agent.h"
-#include "otter_ca.h"  // generated from OTTER_CA_CERT, see CMakeLists.txt
+#include "otter_ca.h"       // generated from OTTER_CA_CERT, see CMakeLists.txt
+#include "otter_signing.h"  // generated from OTTER_SIGNING_PUBKEY
 
 #if CONFIG_IDF_TARGET_ESP32C6
 #include "led_strip.h"
@@ -125,6 +126,9 @@ void app_main(void)
         .fleet_key = OTTER_FLEET_KEY[0] ? OTTER_FLEET_KEY : NULL,
 #ifdef OTTER_HAS_CA
         .cert_pem = OTTER_CA_PEM,
+#endif
+#ifdef OTTER_HAS_SIGNING_KEY
+        .signing_key_pem = OTTER_SIGNING_PUBKEY_PEM,
 #endif
     };
     ESP_ERROR_CHECK(otter_start(&otter));
