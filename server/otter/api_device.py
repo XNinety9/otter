@@ -13,6 +13,7 @@ from . import config
 from .db import SessionLocal, get_session, utcnow
 from .events import broadcaster, wakeups
 from .metrics import CHECKINS, DOWNLOAD_BYTES, DOWNLOADS
+from .notify import notifier
 from .models import Deployment, Device, Firmware
 from .schemas import CheckinIn, CheckinOut, DeviceOut, ProgressIn, UpdateOrder
 from .storage import firmware_path
@@ -54,7 +55,8 @@ async def checkin(body: CheckinIn, request: Request):
 def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
     with SessionLocal() as session:
         device = session.scalar(select(Device).where(Device.mac == body.mac))
-        if device is None:
+        is_new = device is None
+        if is_new:
             device = Device(mac=body.mac, hw=body.hw, app=body.app, fw_version=body.fw_version)
             session.add(device)
 
@@ -68,6 +70,7 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
         CHECKINS.labels(body.app).inc()
 
         order = None
+        failed = None
         if deployment := device.active_deployment:
             fw = deployment.firmware
             if body.app == fw.app and body.fw_version == fw.version:
@@ -75,6 +78,7 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
             elif deployment.status == "rebooting":
                 deployment.status = "failed"
                 deployment.error = f"came back running {body.fw_version} (rollback?)"
+                failed = deployment
             else:
                 # pending, or an interrupted download: (re)send the order.
                 base = config.PUBLIC_URL or str(request.base_url).rstrip("/")
@@ -88,6 +92,12 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
 
         session.commit()
         publish_device(device)
+        if is_new:
+            notifier.emit("device_new", device_id=device.id)
+        else:
+            notifier.device_seen(device.id)
+        if failed:
+            notifier.emit("deployment_failed", deployment_id=failed.id)
         return order
 
 
@@ -106,6 +116,9 @@ def report_progress(deployment_id: int, body: ProgressIn, session: Session = Dep
     deployment.device.last_seen = utcnow()
     session.commit()
     publish_device(deployment.device)
+    notifier.device_seen(deployment.device_id)
+    if body.state == "failed":
+        notifier.emit("deployment_failed", deployment_id=deployment.id)
     return {"ok": True}
 
 

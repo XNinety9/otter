@@ -14,9 +14,19 @@ from .db import engine
 from .events import broadcaster, wakeups
 from .metrics import REGISTRY
 from .migrate import upgrade_database
+from .notify import notifier
 
 
 log = logging.getLogger("otter")
+
+
+async def watch_offline_devices_forever() -> None:
+    while True:
+        await asyncio.sleep(30)
+        try:
+            await run_in_threadpool(notifier.check_offline)
+        except Exception:
+            log.exception("offline check failed")
 
 
 async def evaluate_rollouts_forever() -> None:
@@ -34,10 +44,15 @@ async def lifespan(_: FastAPI):
     upgrade_database()
     broadcaster.bind(asyncio.get_running_loop())
     wakeups.bind(asyncio.get_running_loop())
-    evaluator = asyncio.create_task(evaluate_rollouts_forever()) if config.ROLLOUT_TICK_S > 0 else None
+    notifier.seed_offline()
+    notifier.start()
+    tasks = [asyncio.create_task(watch_offline_devices_forever())]
+    if config.ROLLOUT_TICK_S > 0:
+        tasks.append(asyncio.create_task(evaluate_rollouts_forever()))
     yield
-    if evaluator:
-        evaluator.cancel()
+    for task in tasks:
+        task.cancel()
+    notifier.stop()
 
 
 app = FastAPI(title="Otter", lifespan=lifespan)
