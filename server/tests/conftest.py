@@ -6,14 +6,22 @@ os.environ["OTTER_DATA_DIR"] = tempfile.mkdtemp(prefix="otter-test-")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 from otter.db import Base, engine  # noqa: E402
 from otter.main import app  # noqa: E402
 
 
+def reset_database() -> None:
+    """Empty database: no tables, no migration history."""
+    Base.metadata.drop_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+
+
 @pytest.fixture
 def client():
-    Base.metadata.drop_all(engine)
+    reset_database()
     with TestClient(app) as c:
         yield c
 
