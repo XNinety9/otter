@@ -76,6 +76,9 @@ static char s_config_version[65];
 static otter_config_handler_t s_config_handler;
 static void *s_config_ctx;
 static bool s_started;
+/* One-shot mode (otter_checkin_once, deep sleep): no long polling, next_checkin_s announced. */
+static bool s_one_shot;
+static uint32_t s_next_checkin_s;
 static bool s_checkin_again; /* commands or a configuration came: check in again right away */
 
 /* --- HTTP helpers --------------------------------------------------------- */
@@ -260,7 +263,7 @@ static void count_boot(void)
  * A firmware awaiting validation must hear back at once instead. */
 static uint32_t checkin_wait_s(void)
 {
-    if (s_pending_verify) {
+    if (s_pending_verify || s_one_shot) {
         return 0;
     }
     return s_interval_s < MAX_WAIT_S ? s_interval_s : MAX_WAIT_S;
@@ -296,6 +299,9 @@ static char *build_checkin_body(void)
         cJSON_AddNumberToObject(obj, "boot_count", s_boot_count);
     }
     cJSON_AddStringToObject(obj, "config_version", s_config_version); /* "": none yet */
+    if (s_next_checkin_s) {
+        cJSON_AddNumberToObject(obj, "next_checkin_s", s_next_checkin_s);
+    }
     const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
     if (slot) {
         cJSON_AddNumberToObject(obj, "ota_slot_size", slot->size);
@@ -920,10 +926,12 @@ esp_err_t otter_mark_valid(void)
     return err;
 }
 
-esp_err_t otter_start(const otter_config_t *config)
+/* Common to otter_start() and otter_checkin_once(). */
+static esp_err_t init(const otter_config_t *config)
 {
     ESP_RETURN_ON_FALSE(config && config->server_url && config->app_name, ESP_ERR_INVALID_ARG, TAG,
                         "server_url and app_name are required");
+    ESP_RETURN_ON_FALSE(!s_started, ESP_ERR_INVALID_STATE, TAG, "the agent is already started");
     s_cfg = *config;
     if (!s_cfg.hw) {
         s_cfg.hw = CONFIG_IDF_TARGET;
@@ -950,5 +958,99 @@ esp_err_t otter_start(const otter_config_t *config)
              s_cfg.server_url);
     s_started = true;
     notify_config(); /* the saved configuration applies from boot, even offline */
+    return ESP_OK;
+}
+
+esp_err_t otter_start(const otter_config_t *config)
+{
+    ESP_RETURN_ON_ERROR(init(config), TAG, "init failed");
     return xTaskCreate(otter_task, "otter", 8192, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+/* A new firmware that never reaches the server is rolled back after this many wake-ups. */
+#define ONE_SHOT_VERIFY_BOOTS 3
+
+/* Deep sleep: without a long uptime, a new firmware's validation counts wake-ups in NVS. */
+static void one_shot_verify(bool reached)
+{
+    nvs_handle_t nvs;
+    if (nvs_open("otter", NVS_READWRITE, &nvs) != ESP_OK) {
+        return;
+    }
+    if (reached) {
+        nvs_erase_key(nvs, "pv_boots");
+    } else {
+        uint8_t boots = 0;
+        nvs_get_u8(nvs, "pv_boots", &boots);
+        nvs_set_u8(nvs, "pv_boots", ++boots);
+        if (boots >= ONE_SHOT_VERIFY_BOOTS) {
+            nvs_erase_key(nvs, "pv_boots");
+            nvs_commit(nvs);
+            nvs_close(nvs);
+            ESP_LOGE(TAG, "new firmware couldn't reach the server in %d wake-ups, rolling back", boots);
+            esp_ota_mark_app_invalid_rollback_and_reboot();
+        }
+    }
+    nvs_commit(nvs);
+    nvs_close(nvs);
+}
+
+static esp_err_t checkin_rounds(void);
+
+esp_err_t otter_checkin_once(const otter_config_t *config, uint32_t next_checkin_s)
+{
+    s_one_shot = true;
+    s_next_checkin_s = next_checkin_s;
+    ESP_RETURN_ON_ERROR(init(config), TAG, "init failed");
+
+    /* Awake for a few seconds only: modem sleep saves nothing worth it, and on a weak link the
+     * server's answer, buffered by the access point, got lost more often than not. */
+    wifi_ps_type_t saved_ps = WIFI_PS_NONE;
+    bool ps_changed = esp_wifi_get_ps(&saved_ps) == ESP_OK && saved_ps != WIFI_PS_NONE &&
+                      esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK;
+    esp_err_t result = checkin_rounds();
+    if (ps_changed) {
+        esp_wifi_set_ps(saved_ps);
+    }
+    return result;
+}
+
+static esp_err_t checkin_rounds(void)
+{
+    /* A few rounds: to confirm a configuration, fetch commands queued behind others, or check
+     * in again after a failed update. */
+    for (int round = 0; round < 5; round++) {
+        update_order_t order;
+        bool reached = checkin(&order);
+        if (s_pending_verify) {
+            one_shot_verify(reached);
+            if (reached && !s_cfg.manual_mark_valid) {
+                otter_mark_valid();
+            }
+        }
+        if (s_reboot_requested) {
+            ESP_LOGW(TAG, "rebooting, as asked from Otter");
+            vTaskDelay(pdMS_TO_TICKS(500));
+            esp_restart();
+        }
+        if (order.deployment_id) {
+            apply_update(&order); /* restarts into the new firmware, returns on failure */
+            continue;
+        }
+        if (!reached && round == 0) {
+            /* A link that just woke up often drops the first packets: one more try. */
+            ESP_LOGW(TAG, "check-in failed, trying again in 2 s");
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
+        if (!reached) {
+            return ESP_FAIL;
+        }
+        if (!s_checkin_again) {
+            break;
+        }
+        s_checkin_again = false;
+    }
+    close_kept(&s_report_conn);
+    return ESP_OK;
 }

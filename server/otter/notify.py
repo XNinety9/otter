@@ -24,7 +24,7 @@ from sqlalchemy import select
 
 from . import config
 from .db import SessionLocal, utcnow
-from .models import Deployment, Device, Rollout
+from .models import Deployment, Device, Rollout, silence_allowed
 
 log = logging.getLogger("otter.notify")
 
@@ -242,13 +242,13 @@ class Notifier:
     def seed_offline(self, now: datetime | None = None) -> None:
         """Devices already offline at startup don't trigger alerts."""
         with SessionLocal() as session, self._lock:
-            self._offline = set(session.scalars(select(Device.id).where(Device.last_seen < self._offline_since(now))))
+            self._offline = self._offline_ids(session, now)
 
     def check_offline(self, now: datetime | None = None) -> None:
         if not self.targets() or config.NOTIFY_OFFLINE_MINUTES <= 0:
             return
         with SessionLocal() as session:
-            offline = set(session.scalars(select(Device.id).where(Device.last_seen < self._offline_since(now))))
+            offline = self._offline_ids(session, now)
         with self._lock:
             new = offline - self._offline
             self._offline = (self._offline & offline) | new  # forget devices seen again or deleted
@@ -263,8 +263,12 @@ class Notifier:
             self.emit("device_online", device_id=device_id)
 
     @staticmethod
-    def _offline_since(now: datetime | None) -> datetime:
-        return (now or utcnow()) - timedelta(minutes=config.NOTIFY_OFFLINE_MINUTES)
+    def _offline_ids(session, now: datetime | None) -> set[int]:
+        """Devices silent for longer than allowed (longer for those that said they'd sleep)."""
+        now = now or utcnow()
+        base = config.NOTIFY_OFFLINE_MINUTES * 60
+        rows = session.execute(select(Device.id, Device.last_seen, Device.next_checkin_s))
+        return {i for i, seen, sleep in rows if (now - seen).total_seconds() > silence_allowed(base, sleep)}
 
 
 notifier = Notifier()

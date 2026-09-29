@@ -254,6 +254,24 @@ otter.onCommand("set_level", [](const String &args, String &message) {
 example drives the ESP32-C6-DevKitC-1's RGB LED). The Arduino library only receives commands at
 its check-ins, every 30 s by default.
 
+## Battery devices (deep sleep)
+
+A device that deep-sleeps between measurements can't long-poll or run a background task. Call
+`otter_checkin_once()` instead of `otter_start()` at each wake-up: it checks in once, runs the
+commands, applies the configuration and any pending update, then returns, and you go back to
+sleep. It tells the server when it will be back, so the dashboard doesn't show it offline
+meanwhile ("sleeps, wakes every 10 min" in its panel).
+
+```c
+otter_checkin_once(&otter, 600);                  // back in 10 minutes
+esp_deep_sleep(600ULL * 1000000);
+```
+
+Updates, commands and configuration changes wait for the next wake-up. A new firmware that can't
+reach the server for 3 wake-ups in a row is rolled back. The ESP-IDF example has a sleepy variant
+(`pio run -e esp32c6-sleepy`, app `otter-sleepy`, 60 s of sleep). The Arduino library doesn't
+have a one-shot mode yet.
+
 ## Remote configuration
 
 Settings that shouldn't need a new firmware (intervals, thresholds, feature flags): edit them in a

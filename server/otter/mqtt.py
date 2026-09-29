@@ -30,7 +30,7 @@ from . import config
 from .channels import STABLE
 from .db import SessionLocal, utcnow
 from .events import broadcaster
-from .models import OPEN_STATES, Deployment, Device, Firmware
+from .models import OPEN_STATES, Deployment, Device, Firmware, silence_allowed
 from .schemas import DeviceOut
 from .versions import version_key
 
@@ -236,7 +236,8 @@ class HomeAssistantBridge:
         self._publish(self.firmware_topic(mac), firmware)
 
         last_seen = datetime.fromisoformat(device["last_seen"])
-        online = datetime.now(UTC) - last_seen < timedelta(seconds=config.ONLINE_TIMEOUT_S)
+        allowed = silence_allowed(config.ONLINE_TIMEOUT_S, device.get("next_checkin_s"))
+        online = datetime.now(UTC) - last_seen < timedelta(seconds=allowed)
         self._publish(
             state,
             {"online": "ON" if online else "OFF", "rssi": device["rssi"], "ip": device["ip"], "uptime": device["uptime_s"]},
