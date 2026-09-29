@@ -11,6 +11,7 @@ new version -- or rolls back, depending on --fail-rate.
 import argparse
 import asyncio
 import hashlib
+import json
 import random
 import ssl
 
@@ -29,6 +30,8 @@ class FakeDevice:
         self.version = "1.0.0"
         self.ip = f"192.168.1.{100 + n}"
         self.boot = asyncio.get_running_loop().time()
+        self.boots = 1
+        self.reset_reason = "power_on"
         self.headers = {"X-Otter-Key": args.key} if args.key else {}
         self.interval = args.interval or 30
 
@@ -42,6 +45,9 @@ class FakeDevice:
             started = loop.time()
             try:
                 resp = await self.checkin(client)
+                if commands := resp.get("commands"):
+                    await self.run_commands(client, commands)
+                    continue  # more may be right behind
                 if order := resp["update"]:
                     await self.apply(client, order)
                     continue  # "reboot": check in again right away
@@ -52,6 +58,31 @@ class FakeDevice:
                 self.log(f"server unreachable: {exc!r}")
                 delay = 5
             await asyncio.sleep(max(delay, 0))
+
+    async def run_commands(self, client: httpx.AsyncClient, commands: list[dict]) -> None:
+        reboot = False
+        for command in commands:
+            name, args = command["name"], command.get("args") or {}
+            if name == "reboot":
+                ok, message, reboot = True, "rebooting", True
+            elif name == "identify":
+                ok, message = True, "blinked the (imaginary) LED"
+            elif name == "echo":
+                ok, message = True, json.dumps(args)
+            else:
+                ok, message = False, "unknown command"
+            self.log(f"command {name} {args or ''}-> {message}")
+            await client.post(
+                f"/api/v1/commands/{command['id']}/result", headers=self.headers, json={"ok": ok, "message": message}
+            )
+        if reboot:
+            await self.restart("software")
+
+    async def restart(self, reason: str) -> None:
+        await asyncio.sleep(random.uniform(2, 4))
+        self.boot = asyncio.get_running_loop().time()
+        self.boots += 1
+        self.reset_reason = reason
 
     async def checkin(self, client: httpx.AsyncClient) -> dict:
         loop = asyncio.get_running_loop()
@@ -67,6 +98,8 @@ class FakeDevice:
                 "rssi": random.randint(-85, -45),
                 "uptime_s": int(loop.time() - self.boot),
                 "ota_slot_size": SLOT_SIZES[self.hw],
+                "reset_reason": self.reset_reason,
+                "boot_count": self.boots,
                 "wait_s": 0 if self.args.no_long_poll else int(self.interval),
             },
             timeout=self.interval + 15,
@@ -117,8 +150,7 @@ class FakeDevice:
             return self.log("simulated flash error")
 
         await self.report(client, dep, "rebooting", 100)
-        await asyncio.sleep(random.uniform(2, 4))
-        self.boot = asyncio.get_running_loop().time()
+        await self.restart("software")
         if random.random() < self.args.fail_rate / 2:
             self.log("new image crashed, bootloader rolled back")
         else:

@@ -11,13 +11,13 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import config
+from . import commands, config
 from .db import SessionLocal, get_session, utcnow
 from .events import broadcaster, wakeups
 from .metrics import CHECKINS, CRASHES, DOWNLOAD_BYTES, DOWNLOADS
 from .notify import notifier
-from .models import CRASH_RESETS, Deployment, Device, Firmware
-from .schemas import CheckinIn, CheckinOut, DeviceOut, ProgressIn, UpdateOrder
+from .models import CRASH_RESETS, Command, Deployment, Device, Firmware
+from .schemas import CheckinIn, CheckinOut, CommandOrder, CommandResultIn, DeviceOut, ProgressIn, UpdateOrder
 from .storage import firmware_path
 
 
@@ -53,18 +53,18 @@ def publish_device(device: Device) -> None:
 @router.post("/checkin", response_model=CheckinOut)
 async def checkin(body: CheckinIn, request: Request):
     with wakeups.watch(body.mac) as scheduled:
-        order = await run_in_threadpool(record_checkin, body, request)
-        if order is None and body.wait_s:
+        order, orders = await run_in_threadpool(record_checkin, body, request)
+        if order is None and not orders and body.wait_s:
             try:
                 await asyncio.wait_for(scheduled.wait(), min(body.wait_s, MAX_WAIT_S))
-                # Something was scheduled while we waited: re-evaluate to build the order.
-                order = await run_in_threadpool(record_checkin, body, request)
+                # Something was scheduled while we waited: re-evaluate to build the orders.
+                order, orders = await run_in_threadpool(record_checkin, body, request)
             except TimeoutError:
                 pass
-    return CheckinOut(checkin_interval_s=config.CHECKIN_INTERVAL_S, update=order)
+    return CheckinOut(checkin_interval_s=config.CHECKIN_INTERVAL_S, update=order, commands=orders)
 
 
-def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
+def record_checkin(body: CheckinIn, request: Request) -> tuple[UpdateOrder | None, list[CommandOrder]]:
     with SessionLocal() as session:
         device = session.scalar(select(Device).where(Device.mac == body.mac))
         is_new = device is None
@@ -110,8 +110,11 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
                     sha256=fw.sha256,
                 )
 
+        sent, expired = commands.deliver(device)
         session.commit()
         publish_device(device)
+        for command in sent + expired:
+            commands.publish(command)
         if is_new:
             notifier.emit("device_new", device_id=device.id)
         else:
@@ -121,7 +124,7 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
         if crashed:
             CRASHES.labels(body.app, body.reset_reason).inc()
             notifier.emit("device_crashed", device_id=device.id, reason=body.reset_reason)
-        return order
+        return order, commands.as_orders(sent)
 
 
 def restarted(device: Device, body: CheckinIn) -> bool:
@@ -129,6 +132,17 @@ def restarted(device: Device, body: CheckinIn) -> bool:
     if body.boot_count is not None and device.boot_count is not None:
         return body.boot_count != device.boot_count
     return body.uptime_s is not None and device.uptime_s is not None and body.uptime_s < device.uptime_s
+
+
+@router.post("/commands/{command_id}/result")
+def command_result(command_id: int, body: CommandResultIn, session: Session = Depends(get_session)):
+    command = session.get(Command, command_id)
+    if command is None:
+        raise HTTPException(404, "unknown command")
+    commands.record_result(command, body.ok, body.message)
+    session.commit()
+    commands.publish(command)
+    return {"ok": True}
 
 
 @router.post("/deployments/{deployment_id}/progress")

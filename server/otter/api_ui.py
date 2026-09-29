@@ -8,16 +8,16 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from . import config
+from . import commands, config
 from .api_device import publish_device
 from .api_rollouts import reconcile_channels
 from .auth import require_user
 from .db import get_session
 from .events import broadcaster, wakeups
 from .notify import INFO, Message, notifier
-from .models import OPEN_STATES, Deployment, Device, Firmware, Tag, device_tags
+from .models import OPEN_STATES, Command, Deployment, Device, Firmware, Tag, device_tags
 from .rollouts import cancel_open_deployments
-from .schemas import DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, FirmwarePatch, TagOut, normalize_tag
+from .schemas import CommandIn, CommandOut, DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, FirmwarePatch, TagOut, normalize_tag
 from .storage import delete_firmware_file, store_firmware
 
 router = APIRouter(prefix="/api", tags=["ui"], dependencies=[Depends(require_user)])
@@ -64,6 +64,28 @@ def device_deployments(device_id: int, limit: int = 100, session: Session = Depe
     return session.scalars(
         select(Deployment).where(Deployment.device_id == device_id).order_by(Deployment.id.desc()).limit(limit)
     ).all()
+
+
+@router.get("/devices/{device_id}/commands", response_model=list[CommandOut])
+def device_commands(device_id: int, limit: int = 20, session: Session = Depends(get_session)):
+    session.get(Device, device_id) or _404("device")
+    return session.scalars(
+        select(Command).where(Command.device_id == device_id).order_by(Command.id.desc()).limit(limit)
+    ).all()
+
+
+@router.post("/commands", response_model=list[CommandOut], status_code=201)
+def send_commands(body: CommandIn, session: Session = Depends(get_session)):
+    """Queues a command for each device; long-polling devices get it within a second or two."""
+    devices = session.scalars(select(Device).where(Device.id.in_(body.device_ids))).all()
+    if len(devices) != len(set(body.device_ids)):
+        raise HTTPException(404, "unknown device")
+    queued = [commands.queue(device, body.name, body.args) for device in devices]
+    session.commit()
+    for device, command in zip(devices, queued):
+        commands.publish(command)
+        wakeups.notify(device.mac)
+    return queued
 
 
 @router.patch("/devices/{device_id}", response_model=DeviceOut)

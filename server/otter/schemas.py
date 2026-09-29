@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
+import json
 import re
 
 from pydantic import (
@@ -68,9 +69,51 @@ class UpdateOrder(BaseModel):
     sha256: str
 
 
+class CommandOrder(BaseModel):
+    id: int
+    name: str
+    args: dict | None = None
+
+
 class CheckinOut(BaseModel):
     checkin_interval_s: int
     update: UpdateOrder | None = None
+    commands: list[CommandOrder] = []
+
+
+CommandName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
+
+
+class CommandIn(BaseModel):
+    device_ids: list[int] = Field(min_length=1, max_length=500)
+    name: CommandName
+    args: dict | None = None
+
+    @field_validator("args")
+    @classmethod
+    def small_args(cls, v: dict | None) -> dict | None:
+        if v is not None and len(json.dumps(v)) > 512:
+            raise ValueError("args must be at most 512 bytes of JSON")
+        return v
+
+
+class CommandResultIn(BaseModel):
+    ok: bool
+    message: str | None = Field(default=None, max_length=200)
+
+
+class CommandOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    device_id: int
+    name: str
+    args: Annotated[dict | None, BeforeValidator(lambda v: json.loads(v) if isinstance(v, str) else v)]
+    status: str
+    result: str | None
+    created_at: UtcDatetime
+    sent_at: UtcDatetime | None
+    done_at: UtcDatetime | None
 
 
 class ProgressIn(BaseModel):

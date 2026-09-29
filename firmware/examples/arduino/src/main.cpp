@@ -26,6 +26,11 @@ void setup() {
   config.version = APP_VERSION;
   config.fleetKey = OTTER_FLEET_KEY;
   otter.begin(config);
+  // A remote command to try from the dashboard: answers with its arguments.
+  otter.onCommand("echo", [](const String &args, String &message) {
+    message = args;
+    return true;
+  });
 }
 
 void loop() {

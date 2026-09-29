@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.c" INCLUDE_DIRS "." REQUIRES otter esp_wifi esp_netif nvs_flash esp_event)
+idf_component_register(SRCS "main.c" INCLUDE_DIRS "." REQUIRES otter esp_wifi esp_netif nvs_flash esp_event esp_driver_gpio)
 
 # CA certificate the device trusts for an https:// server, e.g. Caddy's local CA: set
 # OTTER_CA_CERT at build time to the PEM itself (as CI secrets do) or to its path (relative

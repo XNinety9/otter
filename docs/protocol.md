@@ -90,6 +90,41 @@ that answers at once they fall back to the plain interval. A device should send
 `wait_s: 0` when it needs an immediate answer (e.g. a new firmware waiting to be
 marked valid).
 
+### Commands
+
+The check-in response may also carry remote commands queued from the dashboard (at most 5
+per check-in: the rest follow at the next one):
+
+```json
+{
+  "checkin_interval_s": 30,
+  "update": null,
+  "commands": [
+    { "id": 7, "name": "reboot", "args": null },
+    { "id": 8, "name": "blink", "args": { "times": 3 } }
+  ]
+}
+```
+
+The device runs them in order and acknowledges each one:
+
+```
+POST /api/v1/commands/{id}/result
+Content-Type: application/json
+
+{ "ok": true, "message": "blinked 3 times" }    // message optional, at most 200 characters
+```
+
+`ok: false` with a message for a failure, e.g. `"unknown command"` for a name the firmware
+doesn't know. After commands, a device should check in again right away (more may be queued).
+`reboot` is acknowledged first, then the device restarts once every command is acknowledged.
+Commands reach a long-polling device within a second or two; one still queued after 10 min
+expires instead of running at an unexpected time.
+
+Names are lowercase letters, digits and `_` (at most 32); `args` is a JSON object (at most 512
+bytes) or null. Built into the agents: `reboot` and `identify` (make the device show itself,
+e.g. blink an LED); applications register their own.
+
 ## 2. Progress reports
 
 While applying an update, the device reports its progress. Reports are best effort: a lost
@@ -145,6 +180,10 @@ boot:
 loop:
     t0 = now()
     resp = checkin(wait_s = checkin_interval_s)
+    for command in resp.commands:
+        run it, then POST its result
+    if resp.commands:
+        reboot if asked, else check in again right away
     if resp.update:
         report(downloading, 0)
         stream url -> OTA partition, report every ~10 %

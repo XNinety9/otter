@@ -55,6 +55,9 @@ class Device(Base):
         back_populates="device", cascade="all, delete-orphan", order_by="Deployment.id"
     )
     tags: Mapped[list[Tag]] = relationship(secondary=device_tags, back_populates="devices", order_by=Tag.name)
+    commands: Mapped[list["Command"]] = relationship(
+        back_populates="device", cascade="all, delete-orphan", order_by="Command.id"
+    )
 
     @property
     def active_deployment(self) -> "Deployment | None":
@@ -165,3 +168,21 @@ class ApiToken(Base):
     last_used_at: Mapped[datetime | None]
 
     user: Mapped[User] = relationship(lazy="joined")
+
+
+class Command(Base):
+    """A remote command for a device: queued, delivered with a check-in, then acknowledged."""
+
+    __tablename__ = "commands"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"))
+    name: Mapped[str]
+    args: Mapped[str | None]  # JSON object
+    status: Mapped[str] = mapped_column(default="queued")  # queued, sent, done, failed, expired
+    result: Mapped[str | None]  # the device's message, or why it expired
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    sent_at: Mapped[datetime | None]
+    done_at: Mapped[datetime | None]
+
+    device: Mapped[Device] = relationship(back_populates="commands")

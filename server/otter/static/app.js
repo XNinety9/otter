@@ -431,6 +431,7 @@ function renderToolbar() {
   if (usable.some((f) => String(f.id) === previous)) select.value = previous;
   else if (usable.length) select.value = String(usable[0].id);
 
+  document.querySelectorAll(".selection-cmd").forEach((b) => { b.hidden = selected.length === 0; });
   const btn = $("#deploy-btn");
   btn.disabled = selected.length === 0 || !usable.length;
   btn.textContent = selected.length ? `Deploy to ${selected.length}` : "Deploy";
@@ -460,9 +461,79 @@ function openPanel(id) {
   panelDeviceId = id;
   panelHistoryKey = null;
   $(".history tbody", panel).innerHTML = "";
+  panelCommands = [];
+  renderCommands();
   renderPanel();
   panel.showModal();
+  loadCommands(id);
 }
+
+// --- Remote commands ----------------------------------------------------------
+
+let panelCommands = [];
+const COMMAND_STATUS = {
+  queued: "waiting for check-in", sent: "sent, no answer yet", done: "done", failed: "failed", expired: "expired",
+};
+
+async function loadCommands(id) {
+  try {
+    const list = await api("GET", `/api/devices/${id}/commands`);
+    if (id === panelDeviceId) {
+      panelCommands = list;
+      renderCommands();
+    }
+  } catch {}
+}
+
+function renderCommands() {
+  $(".command-log", panel).innerHTML = panelCommands.slice(0, 8).map((c) => `
+    <li><span class="cmd-name">${esc(c.name)}${c.args ? ` ${esc(JSON.stringify(c.args))}` : ""}</span>
+      <span class="${esc(c.status)}">${esc(COMMAND_STATUS[c.status] || c.status)}</span>
+      <span class="muted">${ago(c.done_at || c.sent_at || c.created_at)}</span>
+      ${c.result ? `<span class="cmd-result">${esc(c.result)}</span>` : ""}</li>`).join("");
+}
+
+function commandArrived(c) {
+  if (c.device_id !== panelDeviceId) return;
+  panelCommands = [c, ...panelCommands.filter((x) => x.id !== c.id)].sort((a, b) => b.id - a.id);
+  renderCommands();
+}
+
+async function sendCommand(devices, name, args = null) {
+  const who = devices.length === 1 ? label(devices[0]) : plural(devices.length, "device");
+  if (name === "reboot" && !confirm(`Reboot ${who}?`)) return;
+  try {
+    const sent = await api("POST", "/api/commands", { device_ids: devices.map((d) => d.id), name, args });
+    sent.forEach(commandArrived);
+    toast(`${name} sent to ${who}`, "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+$(".command-bar", panel).addEventListener("click", (e) => {
+  const btn = e.target.closest(".cmd");
+  if (btn) sendCommand([state.devices.get(panelDeviceId)], btn.dataset.cmd);
+});
+
+$(".cmd-custom", panel).addEventListener("submit", (e) => {
+  e.preventDefault();
+  const form = e.target;
+  let args = null;
+  if (form.args.value.trim()) {
+    try {
+      args = JSON.parse(form.args.value);
+    } catch {
+      return toast("Arguments must be a JSON object, e.g. {\"level\": 2}", "err");
+    }
+    if (typeof args !== "object" || Array.isArray(args) || args === null) return toast("Arguments must be a JSON object", "err");
+  }
+  sendCommand([state.devices.get(panelDeviceId)], form.name.value, args);
+  form.reset();
+});
+
+document.querySelectorAll(".selection-cmd").forEach((btn) =>
+  btn.addEventListener("click", () => sendCommand(visibleSelected(), btn.dataset.cmd)));
 
 function duration(from, to) {
   const s = Math.max(0, Math.round((Date.parse(to) - Date.parse(from)) / 1000));
@@ -916,6 +987,7 @@ function connect() {
   });
   es.addEventListener("resync", () => resync());
   es.addEventListener("rollouts", () => loadRollouts());
+  es.addEventListener("command", (e) => commandArrived(JSON.parse(e.data)));
 }
 
 // Keep "last seen" and online dots fresh between events.

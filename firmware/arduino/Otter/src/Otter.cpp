@@ -105,12 +105,79 @@ void OtterAgent::loop() {
 
   Order order;
   bool reached = checkin(order);
+  if (_rebootRequested) {
+    OTTER_LOG("rebooting, as asked from Otter");
+    delay(500);
+    ESP.restart();
+  }
   if (order.deploymentId) {
     applyUpdate(order);  // only returns on failure or cancellation
     _waitMs = 0;
     return;
   }
   _waitMs = reached ? _intervalS * 1000UL : kRetryMs;
+  if (_checkinAgain) {  // commands came: the next ones may be right behind
+    _checkinAgain = false;
+    _waitMs = 0;
+  }
+}
+
+bool OtterAgent::onCommand(const char *name, CommandHandler handler) {
+  Command *slot = nullptr;
+  for (Command &c : _commands) {
+    if (c.name && strcmp(c.name, name) == 0) {
+      slot = &c;
+      break;
+    }
+    if (!slot && !c.name) slot = &c;
+  }
+  if (!slot) return false;
+  slot->name = name;
+  slot->handler = handler;
+  return true;
+}
+
+void OtterAgent::runCommand(int id, const char *name, const String &args) {
+  CommandHandler handler;
+  for (Command &c : _commands) {
+    if (c.name && strcmp(c.name, name) == 0) handler = c.handler;
+  }
+  bool ok = false;
+  String message;
+  if (handler) {
+    OTTER_LOG("command %s %s", name, args.c_str());
+    ok = handler(args, message);
+  } else if (strcmp(name, "reboot") == 0) {
+    _rebootRequested = true;  // once every command is acknowledged
+    ok = true;
+    message = "rebooting";
+  } else if (strcmp(name, "identify") == 0) {
+#ifdef LED_BUILTIN
+    pinMode(LED_BUILTIN, OUTPUT);
+    int level = digitalRead(LED_BUILTIN);
+    for (int i = 0; i < 10; i++) {  // an even count: back to where it was
+      level = !level;
+      digitalWrite(LED_BUILTIN, level);
+      delay(250);
+    }
+    message = "blinked LED_BUILTIN";
+#else
+    OTTER_LOG("*** identify requested from Otter ***");
+    message = "logged only: this board has no LED_BUILTIN";
+#endif
+    ok = true;
+  } else {
+    message = "unknown command";
+  }
+
+  JsonDocument doc;
+  doc["ok"] = ok;
+  if (message.length()) doc["message"] = message.substring(0, 200);
+  String body;
+  serializeJson(doc, body);
+  if (post("/api/v1/commands/" + String(id) + "/result", body, nullptr) != 200) {
+    OTTER_LOG("command %d: result not delivered", id);
+  }
 }
 
 int OtterAgent::post(const String &path, const String &body, String *response) {
@@ -159,6 +226,14 @@ bool OtterAgent::checkin(Order &order) {
   }
   uint32_t interval = resp["checkin_interval_s"] | 0;
   if (interval > 0) _intervalS = interval;
+
+  for (JsonObject command : resp["commands"].as<JsonArray>()) {
+    const char *name = command["name"] | "";
+    String args;
+    if (command["args"].is<JsonObject>()) serializeJson(command["args"], args);
+    runCommand(command["id"] | 0, name, args.length() ? args : String("{}"));
+    _checkinAgain = true;
+  }
 
   JsonObject update = resp["update"];
   if (!update.isNull()) {
