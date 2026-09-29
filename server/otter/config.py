@@ -7,6 +7,8 @@ DB_URL = os.environ.get("OTTER_DB_URL", f"sqlite:///{DATA_DIR / 'otter.db'}")
 
 # Shared secret devices must send in X-Otter-Key. Empty = no check (LAN only!).
 FLEET_KEY = os.environ.get("OTTER_FLEET_KEY", "")
+# New devices wait for an approval in the dashboard before they can check in (#15).
+DEVICE_APPROVAL = os.environ.get("OTTER_DEVICE_APPROVAL", "").lower() in ("1", "true", "yes")
 
 # Base URL devices use to download firmware, e.g. http://192.168.1.10:8000.
 # Empty = derived from the incoming check-in request.

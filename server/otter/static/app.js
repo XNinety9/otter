@@ -67,6 +67,16 @@ function isOnline(d) {
   return Date.now() - Date.parse(d.last_seen) < (state.interval * 2.5 + 5) * 1000;
 }
 
+// --- Device credentials (per-device tokens) ---------------------------------------
+
+const AUTH_CHIPS = { revoked: "⛔ revoked", awaiting_approval: "awaiting approval" };
+const AUTH_TEXT = {
+  token: "Uses its own token: the fleet key alone can't act as this device.",
+  fleet_key: "Uses the fleet key (agent without token support, or not enrolled yet).",
+  revoked: "Revoked: its check-ins are refused until you re-enroll it.",
+  awaiting_approval: "New device awaiting your approval: its check-ins are refused until then.",
+};
+
 // Same list as the server: restarts that mean the firmware crashed or the power is weak.
 const CRASH_RESETS = new Set(["panic", "int_watchdog", "task_watchdog", "watchdog", "brownout", "power_glitch", "cpu_lockup"]);
 const crashed = (d) => CRASH_RESETS.has(d.reset_reason);
@@ -161,6 +171,7 @@ function updateRow(tr, d) {
   $(".mac", tr).textContent = d.name ? d.mac : "";
   $(".row-tags", tr).innerHTML = d.tags.map((t) => `<span class="tag-chip">#${esc(t)}</span>`).join("") +
     (d.channel ? `<span class="chan-chip" title="Follows the ${esc(d.channel)} channel">⇢ ${esc(d.channel)}</span>` : "") +
+    (AUTH_CHIPS[d.auth] ? `<span class="auth-chip ${d.auth}">${AUTH_CHIPS[d.auth]}</span>` : "") +
     (crashed(d) ? `<span class="crash-chip" title="Last restart: ${esc(lastReset(d))}">⚠ ${esc(d.reset_reason.replaceAll("_", " "))}</span>` : "");
   $(".app", tr).textContent = d.app;
   $(".hw", tr).textContent = d.hw;
@@ -511,6 +522,26 @@ async function sendCommand(devices, name, args = null) {
   }
 }
 
+async function accessAction(action, question, done) {
+  const d = state.devices.get(panelDeviceId);
+  if (question && !confirm(question.replace("{}", label(d)))) return;
+  try {
+    const updated = await api("POST", `/api/devices/${d.id}/${action}`);
+    state.devices.set(updated.id, updated);
+    renderPanel();
+    renderDevices();
+    toast(done.replace("{}", label(d)), "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+$(".access .revoke", panel).addEventListener("click", () => accessAction("revoke",
+  "Revoke {}?\n\nIts check-ins will be refused, with its token or the fleet key, until you re-enroll it.", "{} revoked"));
+$(".access .reenroll", panel).addEventListener("click", () => accessAction("reenroll",
+  "Re-enroll {}?\n\nIts current token stops working; its next check-in with the fleet key gets a new one.", "{} can enroll again"));
+$(".access .approve", panel).addEventListener("click", () => accessAction("approve", null, "{} approved"));
+
 $(".command-bar", panel).addEventListener("click", (e) => {
   const btn = e.target.closest(".cmd");
   if (btn) sendCommand([state.devices.get(panelDeviceId)], btn.dataset.cmd);
@@ -567,6 +598,12 @@ function renderPanel() {
     ["Last seen", `${ago(d.last_seen)} · ${isOnline(d) ? "online" : "offline"}`],
     ["First seen", new Date(d.first_seen).toLocaleString()],
   ];
+  const access = $(".access-state", panel);
+  access.textContent = AUTH_TEXT[d.auth] || d.auth;
+  access.className = `access-state ${d.auth}`;
+  $(".access .approve", panel).hidden = d.auth !== "awaiting_approval";
+  $(".access .reenroll", panel).hidden = !["token", "revoked"].includes(d.auth);
+  $(".access .revoke", panel).hidden = d.auth === "revoked";
   const follow = $(".channel-follow select", panel);
   if (document.activeElement !== follow) follow.innerHTML = channelOptions(d.channel, "Manual updates only");
   $(".tag-list", panel).innerHTML = d.tags.map((t) => `

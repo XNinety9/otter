@@ -79,6 +79,8 @@ class CheckinOut(BaseModel):
     checkin_interval_s: int
     update: UpdateOrder | None = None
     commands: list[CommandOrder] = []
+    # Issued to a device checking in with the fleet key: use it from now on (Authorization: Bearer).
+    token: str | None = None
 
 
 CommandName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
@@ -174,6 +176,7 @@ class DeviceOut(BaseModel):
     min_free_heap: int | None = None
     reset_reason: str | None = None
     boot_count: int | None = None
+    auth: str = "fleet_key"
     first_seen: UtcDatetime
     last_seen: UtcDatetime
     last_deployment: DeploymentOut | None

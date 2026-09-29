@@ -12,7 +12,7 @@ from . import commands, config
 from .api_device import publish_device
 from .api_rollouts import reconcile_channels
 from .auth import require_user
-from .db import get_session
+from .db import get_session, utcnow
 from .events import broadcaster, wakeups
 from .notify import INFO, Message, notifier
 from .models import OPEN_STATES, Command, Deployment, Device, Firmware, Tag, device_tags
@@ -64,6 +64,41 @@ def device_deployments(device_id: int, limit: int = 100, session: Session = Depe
     return session.scalars(
         select(Deployment).where(Deployment.device_id == device_id).order_by(Deployment.id.desc()).limit(limit)
     ).all()
+
+
+# --- Device credentials (#15, see device_auth.py) ---------------------------
+
+
+@router.post("/devices/{device_id}/revoke", response_model=DeviceOut)
+def revoke_device(device_id: int, session: Session = Depends(get_session)):
+    """Blocks the device, with its token or the fleet key, until it is re-enrolled."""
+    device = session.get(Device, device_id) or _404("device")
+    device.revoked_at = utcnow()
+    device.token_hash = None
+    session.commit()
+    publish_device(device)
+    wakeups.notify(device.mac)  # end a check-in it may be holding open
+    return device
+
+
+@router.post("/devices/{device_id}/reenroll", response_model=DeviceOut)
+def reenroll_device(device_id: int, session: Session = Depends(get_session)):
+    """Forgets the device's token: its next check-in with the fleet key gets a new one."""
+    device = session.get(Device, device_id) or _404("device")
+    device.revoked_at = device.token_used_at = device.token_hash = None
+    device.approved = True
+    session.commit()
+    publish_device(device)
+    return device
+
+
+@router.post("/devices/{device_id}/approve", response_model=DeviceOut)
+def approve_device(device_id: int, session: Session = Depends(get_session)):
+    device = session.get(Device, device_id) or _404("device")
+    device.approved = True
+    session.commit()
+    publish_device(device)
+    return device
 
 
 @router.get("/devices/{device_id}/commands", response_model=list[CommandOut])
