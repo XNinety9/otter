@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from . import rollouts
+from . import channels, rollouts
 from .api_device import publish_device
 from .auth import require_user
 from .db import SessionLocal, get_session
@@ -28,6 +28,7 @@ def rollout_out(rollout: Rollout) -> RolloutOut:
         id=rollout.id,
         firmware=rollout.firmware,
         tags=[t for t in rollout.tags.split(",") if t],
+        channel=rollout.channel,
         stages=stats,
         current_stage=rollout.current_stage,
         status=rollout.status,
@@ -51,15 +52,22 @@ def publish(session: Session, changes: rollouts.Changes) -> None:
         broadcaster.publish("rollouts")
 
 
-def evaluate_now() -> rollouts.Changes:
-    """One evaluation pass, run periodically by the app."""
+def background_pass() -> None:
+    """Run periodically by the app: advance staged rollouts, then follow release channels."""
     with SessionLocal() as session:
         changes = rollouts.evaluate(session)
         session.commit()
         publish(session, changes)
         for rollout in changes.halted:
             notifier.emit("rollout_halted", rollout_id=rollout.id)
-        return changes
+    reconcile_channels()
+
+
+def reconcile_channels() -> None:
+    with SessionLocal() as session:
+        changes = channels.reconcile(session)
+        session.commit()
+        publish(session, changes)
 
 
 @router.get("/rollouts", response_model=list[RolloutOut])
@@ -75,12 +83,14 @@ def create_rollout(body: RolloutIn, session: Session = Depends(get_session)):
         raise HTTPException(404, "unknown firmware")
     try:
         rollout, changes = rollouts.create(
-            session, fw, sorted(set(body.tags)), body.stages, body.soak_s, body.max_failure_rate
+            session, fw, sorted(set(body.tags)), body.stages, body.soak_s, body.max_failure_rate, body.channel
         )
     except rollouts.RolloutError as exc:
         raise HTTPException(422, str(exc)) from exc
     session.commit()
     publish(session, changes)
+    if body.channel:
+        broadcaster.publish("firmwares")  # now published on the channel
     return rollout_out(rollout)
 
 

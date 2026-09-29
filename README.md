@@ -18,6 +18,9 @@ Fleet tracking and centralized OTA updates for home-made ESP32 / ESP8266 devices
   has passed; if failures exceed a threshold, the rollout halts before touching the rest of the
   fleet. Canaries are picked among online devices. Pause, resume, skip to the next stage or abort
   from the UI.
+- **Release channels**: publish a firmware on a channel (`stable`, `beta`, anything) and let devices
+  follow one: they are updated automatically, never downgraded. A device follows its channel and
+  `stable`, so beta testers get the newest of both. Publishing can also go through a staged rollout.
 - **Tags**: group devices (`living-room`, `test-bench`…), filter the dashboard by tag and roll out
   to a tag. A tag deployment only targets the tagged devices running the firmware's app and
   hardware, and skips those already on that version.

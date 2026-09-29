@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from . import config
 from .db import utcnow
 from .models import ACTIVE_STATES, FINAL_STATES, OPEN_STATES, Deployment, Device, Firmware, Rollout, Tag
+from .versions import is_newer
 
 RUNNING, PAUSED, HALTED, COMPLETED, ABORTED = "running", "paused", "halted", "completed", "aborted"
 OPEN_ROLLOUT_STATES = (RUNNING, PAUSED, HALTED)
@@ -51,15 +52,35 @@ def stage_sizes(total: int, percentages: list[int]) -> list[int]:
 
 
 def create(
-    session: Session, fw: Firmware, tags: list[str], stages: list[int], soak_s: int, max_failure_rate: float
+    session: Session,
+    fw: Firmware,
+    tags: list[str],
+    stages: list[int],
+    soak_s: int,
+    max_failure_rate: float,
+    channel: str | None = None,
 ) -> tuple[Rollout, Changes]:
+    """Targets devices of the tags, or following the channel, or all of the app and hardware.
+
+    With a channel, the firmware is also published on it, and only devices on an older
+    version are targeted (channels never downgrade). Otherwise any other version is a
+    target, so a rollout can also roll a fleet back.
+    """
+    from .channels import followers  # channels imports this module
+
     query = select(Device).where(Device.app == fw.app, Device.hw == fw.hw, Device.fw_version != fw.version)
     if tags:
         query = query.where(Device.tags.any(Tag.name.in_(tags)))
+    if channel:
+        query = query.where(followers(channel))
     targets = list(session.scalars(query).all())
+    if channel:
+        targets = [d for d in targets if is_newer(fw.version, d.fw_version)]
     if not targets:
-        scope = f" tagged {', '.join(tags)}" if tags else ""
+        scope = f" tagged {', '.join(tags)}" if tags else f" following {channel}" if channel else ""
         raise RolloutError(f"no {fw.app} / {fw.hw} device{scope} needs {fw.version}")
+    if channel:
+        fw.channel = channel
 
     # Canaries should answer quickly: online devices first, in random order.
     random.shuffle(targets)
@@ -70,6 +91,7 @@ def create(
     rollout = Rollout(
         firmware=fw,
         tags=",".join(tags),
+        channel=channel,
         stages=json.dumps(stages),
         soak_s=soak_s,
         max_failure_rate=max_failure_rate,

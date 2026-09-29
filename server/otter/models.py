@@ -42,6 +42,7 @@ class Device(Base):
     uptime_s: Mapped[int | None]
     first_seen: Mapped[datetime] = mapped_column(default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(default=utcnow)
+    channel: Mapped[str | None]  # follows this release channel automatically; None = manual updates
 
     deployments: Mapped[list["Deployment"]] = relationship(
         back_populates="device", cascade="all, delete-orphan", order_by="Deployment.id"
@@ -69,6 +70,7 @@ class Firmware(Base):
     sha256: Mapped[str] = mapped_column(String(64))
     notes: Mapped[str | None]
     uploaded_at: Mapped[datetime] = mapped_column(default=utcnow)
+    channel: Mapped[str | None]  # release channel it is published on; None = unpublished
 
 
 class Deployment(Base):
@@ -101,6 +103,7 @@ class Rollout(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     firmware_id: Mapped[int] = mapped_column(ForeignKey("firmwares.id", ondelete="CASCADE"))
     tags: Mapped[str]  # comma-separated, empty = every device of the app and hardware
+    channel: Mapped[str | None]  # set when the rollout publishes the firmware on a channel
     stages: Mapped[str]  # JSON list of cumulative percentages, e.g. [10, 50, 100]
     soak_s: Mapped[int]
     max_failure_rate: Mapped[float]

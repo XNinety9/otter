@@ -144,7 +144,8 @@ function updateRow(tr, d) {
   $(".sel", tr).checked = state.selected.has(d.id);
   $(".name", tr).textContent = label(d);
   $(".mac", tr).textContent = d.name ? d.mac : "";
-  $(".row-tags", tr).innerHTML = d.tags.map((t) => `<span class="tag-chip">#${esc(t)}</span>`).join("");
+  $(".row-tags", tr).innerHTML = d.tags.map((t) => `<span class="tag-chip">#${esc(t)}</span>`).join("") +
+    (d.channel ? `<span class="chan-chip" title="Follows the ${esc(d.channel)} channel">⇢ ${esc(d.channel)}</span>` : "");
   $(".app", tr).textContent = d.app;
   $(".hw", tr).textContent = d.hw;
   $(".fw", tr).innerHTML = active
@@ -196,7 +197,59 @@ function sortedDevices() {
 
 // --- Filters -----------------------------------------------------------------
 
-const compareVersions = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+// Same ordering as the server (otter/versions.py): 1.10.0 > 1.9.0, 2.0.0-beta < 2.0.0, v1.2 == 1.2.0.
+function parseVersion(v) {
+  const [core, pre = ""] = v.trim().replace(/^[vV]/, "").split("+")[0].split(/-(.*)/s);
+  const part = (p) => (/^\d+$/.test(p) ? [0, Number(p), ""] : [1, 0, p]);
+  const numbers = core.split(".").map(part);
+  while (numbers.length < 3) numbers.push([0, 0, ""]);
+  return { numbers, pre: pre ? pre.split(".").map(part) : null };
+}
+
+function compareParts(a, b) {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (!a[i]) return -1;
+    if (!b[i]) return 1;
+    for (let j = 0; j < 3; j++) {
+      if (a[i][j] < b[i][j]) return -1;
+      if (a[i][j] > b[i][j]) return 1;
+    }
+  }
+  return 0;
+}
+
+function compareVersions(a, b) {
+  const x = parseVersion(a), y = parseVersion(b);
+  const c = compareParts(x.numbers, y.numbers);
+  if (c || (!x.pre && !y.pre)) return c;
+  if (!x.pre) return 1;  // a release comes after its pre-releases
+  if (!y.pre) return -1;
+  return compareParts(x.pre, y.pre);
+}
+
+// Release channels: a device follows its channel and "stable".
+const followsChannel = (d, channel) => Boolean(d.channel) && (channel === "stable" || d.channel === channel);
+
+function knownChannels() {
+  const names = new Set(["stable", "beta"]);
+  for (const x of [...state.devices.values(), ...state.firmwares]) if (x.channel) names.add(x.channel);
+  return [...names].sort((a, b) => (a === "stable" ? -1 : b === "stable" ? 1 : a.localeCompare(b)));
+}
+
+function channelOptions(current, none) {
+  const names = knownChannels();
+  if (current && !names.includes(current)) names.push(current);
+  return `<option value="">${none}</option>` +
+    names.map((c) => `<option value="${esc(c)}"${c === current ? " selected" : ""}>${esc(c)}</option>`).join("") +
+    `<option value="__other">Other…</option>`;
+}
+
+// Asks for a channel name when "Other…" is picked; null = cancelled.
+function pickedChannel(select) {
+  if (select.value !== "__other") return select.value || null;
+  const name = prompt("Channel name (a-z, 0-9, - or _):");
+  return name && name.trim() ? name.trim().toLowerCase() : undefined;
+}
 
 // Newest firmware version per app/hw, to spot outdated devices.
 function latestVersions() {
@@ -225,7 +278,7 @@ const FILTERS = {
 
 function matchesSearch(d, q) {
   if (!q) return true;
-  return [d.name, d.mac, d.ip, d.app, d.hw, d.fw_version, ...d.tags].some((v) => v && v.toLowerCase().includes(q));
+  return [d.name, d.mac, d.ip, d.app, d.hw, d.fw_version, d.channel, ...d.tags].some((v) => v && v.toLowerCase().includes(q));
 }
 
 const matchesTag = (d) => !state.filter.tag || d.tags.includes(state.filter.tag);
@@ -420,6 +473,8 @@ function renderPanel() {
     ["Last seen", `${ago(d.last_seen)} · ${isOnline(d) ? "online" : "offline"}`],
     ["First seen", new Date(d.first_seen).toLocaleString()],
   ];
+  const follow = $(".channel-follow select", panel);
+  if (document.activeElement !== follow) follow.innerHTML = channelOptions(d.channel, "Manual updates only");
   $(".tag-list", panel).innerHTML = d.tags.map((t) => `
     <span class="tag-chip">#${esc(t)}<button data-tag="${esc(t)}" aria-label="Remove tag ${esc(t)}">×</button></span>`).join("");
   $(".info", panel).innerHTML = info.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
@@ -466,6 +521,17 @@ async function setTags(id, tags) {
   }
 }
 
+$(".channel-follow select", panel).addEventListener("change", async (e) => {
+  const channel = pickedChannel(e.target);
+  if (channel === undefined) return renderPanel();
+  try {
+    await api("PATCH", `/api/devices/${panelDeviceId}`, { channel });
+  } catch (err) {
+    toast(err.message, "err");
+  }
+  e.target.blur();
+});
+
 $(".tag-add", panel).addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = e.target.tag;
@@ -501,6 +567,7 @@ function renderFirmwares() {
       <td>${bytes(f.size)}</td>
       <td class="mono muted" title="${esc(f.sha256)}">${esc(f.sha256.slice(0, 12))}…</td>
       <td title="${esc(new Date(f.uploaded_at).toLocaleString())}">${ago(f.uploaded_at)}</td>
+      <td><select class="channel-select" aria-label="Publish on channel">${channelOptions(f.channel, "—")}</select></td>
       <td class="muted">${esc(f.notes)}</td>
       <td class="actions">
         <button class="staged ghost" title="Release ${esc(f.app)} ${esc(f.version)} progressively, in stages">Staged…</button>
@@ -513,6 +580,30 @@ function renderFirmwares() {
   const known = (key) => [...new Set([...state.devices.values(), ...state.firmwares].map((x) => x[key]))].sort();
   $("#known-apps").innerHTML = known("app").map((v) => `<option value="${esc(v)}">`).join("");
   $("#known-hws").innerHTML = known("hw").map((v) => `<option value="${esc(v)}">`).join("");
+  $("#known-channels").innerHTML = knownChannels().map((v) => `<option value="${esc(v)}">`).join("");
+}
+
+$("#firmwares tbody").addEventListener("change", async (e) => {
+  const select = e.target.closest(".channel-select");
+  if (!select) return;
+  const fw = state.firmwares.find((f) => f.id === Number(select.closest("tr").dataset.id));
+  const channel = pickedChannel(select);
+  if (channel === undefined || (channel && !confirmPublish(fw, channel))) return renderFirmwares();
+  try {
+    await api("PATCH", `/api/firmwares/${fw.id}`, { channel });
+    toast(channel ? `${fw.app} ${fw.version} published on ${channel}` : `${fw.app} ${fw.version} unpublished`, "ok");
+  } catch (err) {
+    toast(err.message, "err");
+    renderFirmwares();
+  }
+});
+
+function confirmPublish(fw, channel) {
+  const n = [...state.devices.values()].filter(
+    (d) => d.app === fw.app && d.hw === fw.hw && followsChannel(d, channel) && compareVersions(fw.version, d.fw_version) > 0,
+  ).length;
+  const who = channel === "stable" ? "every device following a channel" : `devices following ${channel}`;
+  return confirm(`Publish ${fw.app} ${fw.version} on ${channel}?\n\n${plural(n, "device")} (${who}, on an older version) will be updated right away.`);
 }
 
 $("#firmwares tbody").addEventListener("click", async (e) => {
@@ -599,7 +690,8 @@ function renderRollouts() {
   const shown = [...open, ...done];
   $("#no-rollouts").hidden = shown.length > 0;
   $("#rollouts").innerHTML = shown.map((r) => {
-    const target = r.tags.length ? r.tags.map((t) => `#${esc(t)}`).join(" ") : `all ${esc(r.firmware.app)} devices`;
+    const target = r.channel ? `channel ${esc(r.channel)}`
+      : r.tags.length ? r.tags.map((t) => `#${esc(t)}`).join(" ") : `all ${esc(r.firmware.app)} devices`;
     const stages = r.stages.map((st, i) => {
       const seg = (cls, n) => (n ? `<i class="${cls}" style="width:${(100 * n) / st.size}%"></i>` : "");
       const current = i === r.current_stage && OPEN_ROLLOUTS.has(r.status);
@@ -664,9 +756,10 @@ function openRolloutDialog(fw) {
   rolloutFirmware = fw;
   const form = $("form", rolloutDialog);
   $("#rollout-title").textContent = `Staged rollout of ${fw.app} ${fw.version} (${fw.hw})`;
-  form.tag.innerHTML = `<option value="">All ${esc(fw.app)} devices</option>` +
-    [...tagCounts().keys()].map((t) => `<option value="${esc(t)}">#${esc(t)}</option>`).join("");
-  form.tag.value = state.filter.tag;
+  form.target.innerHTML = `<option value="">All ${esc(fw.app)} devices</option>` +
+    (tagCounts().size ? `<optgroup label="Tag">${[...tagCounts().keys()].map((t) => `<option value="tag:${esc(t)}">#${esc(t)}</option>`).join("")}</optgroup>` : "") +
+    `<optgroup label="Channel (also publishes it there)">${knownChannels().map((c) => `<option value="channel:${esc(c)}">${esc(c)}</option>`).join("")}</optgroup>`;
+  form.target.value = state.filter.tag ? `tag:${state.filter.tag}` : "";
   updateRolloutPreview();
   rolloutDialog.returnValue = "";  // otherwise Esc would replay the previous "start"
   rolloutDialog.showModal();
@@ -678,15 +771,19 @@ function rolloutFormValues() {
     stages: form.stages.value.split(/[\s,;]+/).filter(Boolean).map(Number),
     soak_s: Math.round(Number(form.soak.value) * 60),
     max_failure_rate: Number(form.rate.value) / 100,
-    tags: form.tag.value ? [form.tag.value] : [],
+    tags: form.target.value.startsWith("tag:") ? [form.target.value.slice(4)] : [],
+    channel: form.target.value.startsWith("channel:") ? form.target.value.slice(8) : null,
   };
 }
 
 function updateRolloutPreview() {
   const fw = rolloutFirmware;
-  const { stages, tags } = rolloutFormValues();
+  const { stages, tags, channel } = rolloutFormValues();
+  // Same targeting as the server: channels only move devices forward.
   const targets = [...state.devices.values()].filter(
-    (d) => d.app === fw.app && d.hw === fw.hw && d.fw_version !== fw.version && (!tags.length || d.tags.includes(tags[0])),
+    (d) => d.app === fw.app && d.hw === fw.hw && d.fw_version !== fw.version &&
+      (!tags.length || d.tags.includes(tags[0])) &&
+      (!channel || (followsChannel(d, channel) && compareVersions(fw.version, d.fw_version) > 0)),
   );
   const valid = stages.length && stages.every((n, i) => n >= 1 && n <= 100 && (i === 0 || n > stages[i - 1])) && stages.at(-1) === 100;
   const preview = $(".preview", rolloutDialog);

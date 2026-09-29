@@ -221,6 +221,11 @@ dialog#rollout-dialog::backdrop { background: rgb(0 0 0 / .45); }
 .login pre { margin: 0; padding: 8px 10px; overflow-x: auto; font-family: var(--mono); font-size: 12px; background: var(--track); border-radius: 6px; }
 #user { font-size: 13px; }
 
+.chan-chip { font-size: 11px; padding: 0 7px; border-radius: 99px; color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); white-space: nowrap; }
+.channel-follow { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; font-size: 13px; }
+.channel-select { padding: 3px 6px; font-size: 13px; }
+.upload input[name="channel"] { width: 110px; }
+
 #toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 10; }
 .toast { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / .15); max-width: 380px; }
 .toast.ok { border-left-color: var(--ok); }
