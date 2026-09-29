@@ -23,6 +23,10 @@
           <button id="deploy-btn" class="primary" disabled>Deploy</button>
         </div>
       </div>
+      <div class="filters">
+        <input type="search" id="search" placeholder="Search name, MAC, IP, app, version…  ( / )" aria-label="Search devices">
+        <div class="chips" role="group" aria-label="Show"></div>
+      </div>
       <div class="table-wrap">
         <table id="devices">
           <thead>
@@ -41,6 +45,7 @@
           <tbody></tbody>
         </table>
         <p id="no-devices" class="empty">No device yet. Flash the Otter agent, or run <code>tools/simulate.py</code>.</p>
+        <p id="no-match" class="empty" hidden>No device matches these filters. <button class="link clear-filters">Clear filters</button></p>
       </div>
     </section>
 

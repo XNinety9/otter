@@ -68,6 +68,15 @@ h2 { margin: 0; font-size: 16px; }
 .live.on { color: var(--ok); }
 .live.on::before { content: "● "; }
 
+.filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
+.filters input[type="search"] { flex: 1 1 260px; max-width: 420px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border-radius: 99px; padding: 4px 12px; font-size: 13px; }
+.chip .n { color: var(--muted); margin-left: 4px; font-variant-numeric: tabular-nums; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.chip[aria-pressed="true"] .n { color: inherit; opacity: .8; }
+#no-match .link { color: var(--accent); font-weight: 400; }
+
 .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 10px 12px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); vertical-align: middle; }
