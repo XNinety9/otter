@@ -1,6 +1,12 @@
 # HTTPS in front of Otter (see docker-compose.https.yml).
 # OTTER_TLS=internal (default): certificates from Caddy's own CA, for LAN names like otter.lan.
 # OTTER_TLS=you@example.com: Let's Encrypt, for a public domain name pointing at this host.
+# OTTER_DOMAIN may also be the host's IP address, when the LAN has no DNS name for it.
+{
+	# Clients connecting by IP address send no server name (SNI): answer with this site.
+	default_sni {$OTTER_DOMAIN}
+}
+
 {$OTTER_DOMAIN} {
 	tls {$OTTER_TLS:internal}
 	encode gzip

@@ -10,6 +10,7 @@
 #include "freertos/event_groups.h"
 #include "nvs_flash.h"
 #include "otter_agent.h"
+#include "otter_ca.h"  // generated from OTTER_CA_CERT, see CMakeLists.txt
 
 #ifndef OTTER_FLEET_KEY
 #define OTTER_FLEET_KEY ""
@@ -71,6 +72,9 @@ void app_main(void)
         .server_url = OTTER_SERVER,
         .app_name = "otter-demo",
         .fleet_key = OTTER_FLEET_KEY[0] ? OTTER_FLEET_KEY : NULL,
+#ifdef OTTER_HAS_CA
+        .cert_pem = OTTER_CA_PEM,
+#endif
     };
     ESP_ERROR_CHECK(otter_start(&otter));
 
