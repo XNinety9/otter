@@ -5,6 +5,7 @@ const state = {
   firmwares: [],
   selected: new Set(),
   interval: 30,
+  filter: { q: "", show: "all" },
 };
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -163,13 +164,105 @@ function sortedDevices() {
   );
 }
 
+// --- Filters -----------------------------------------------------------------
+
+const compareVersions = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+
+// Newest firmware version per app/hw, to spot outdated devices.
+function latestVersions() {
+  const latest = new Map();
+  for (const f of state.firmwares) {
+    const key = `${f.app}/${f.hw}`;
+    if (!latest.has(key) || compareVersions(f.version, latest.get(key)) > 0) latest.set(key, f.version);
+  }
+  return latest;
+}
+
+const FILTERS = {
+  all: { label: "All", test: () => true },
+  online: { label: "Online", test: (d) => isOnline(d) },
+  offline: { label: "Offline", test: (d) => !isOnline(d) },
+  updating: { label: "Updating", test: (d) => ACTIVE.has(d.last_deployment?.status) },
+  failed: { label: "Failed", test: (d) => d.last_deployment?.status === "failed" },
+  outdated: {
+    label: "Outdated",
+    test: (d, latest) => {
+      const newest = latest.get(`${d.app}/${d.hw}`);
+      return newest !== undefined && compareVersions(d.fw_version, newest) < 0;
+    },
+  },
+};
+
+function matchesSearch(d, q) {
+  if (!q) return true;
+  return [d.name, d.mac, d.ip, d.app, d.hw, d.fw_version].some((v) => v && v.toLowerCase().includes(q));
+}
+
+function visibleDevices() {
+  const latest = latestVersions();
+  const q = state.filter.q.trim().toLowerCase();
+  const test = FILTERS[state.filter.show].test;
+  return sortedDevices().filter((d) => matchesSearch(d, q) && test(d, latest));
+}
+
+// Deploy only ever targets devices that are both selected and visible.
+function visibleSelected() {
+  return visibleDevices().filter((d) => state.selected.has(d.id));
+}
+
+function renderFilters() {
+  const latest = latestVersions();
+  const q = state.filter.q.trim().toLowerCase();
+  const searched = sortedDevices().filter((d) => matchesSearch(d, q));
+  $(".chips").innerHTML = Object.entries(FILTERS).map(([key, f]) => `
+    <button class="chip" data-show="${key}" aria-pressed="${state.filter.show === key}">
+      ${f.label}<span class="n">${searched.filter((d) => f.test(d, latest)).length}</span>
+    </button>`).join("");
+}
+
+function setFilter(change) {
+  Object.assign(state.filter, change);
+  const params = new URLSearchParams();
+  if (state.filter.q) params.set("q", state.filter.q);
+  if (state.filter.show !== "all") params.set("show", state.filter.show);
+  const query = params.toString();
+  history.replaceState(null, "", query ? `?${query}` : location.pathname);
+  renderDevices();
+  renderToolbar();
+}
+
+function loadFilterFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const show = params.get("show");
+  state.filter.q = params.get("q") || "";
+  state.filter.show = Object.hasOwn(FILTERS, show ?? "") ? show : "all";
+  $("#search").value = state.filter.q;
+}
+
+$("#search").addEventListener("input", (e) => setFilter({ q: e.target.value }));
+$(".chips").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (chip) setFilter({ show: chip.dataset.show });
+});
+$(".clear-filters").addEventListener("click", () => {
+  $("#search").value = "";
+  setFilter({ q: "", show: "all" });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "/" && !e.target.closest("input, textarea, select, dialog")) {
+    e.preventDefault();
+    $("#search").focus();
+  }
+});
+
 function renderDevices() {
   const tbody = $("#devices tbody");
+  const devices = visibleDevices();
+  const visible = new Set(devices.map((d) => d.id));
   const rows = new Map([...tbody.rows].map((tr) => [Number(tr.dataset.id), tr]));
   for (const [id, tr] of rows) {
-    if (!state.devices.has(id)) { tr.remove(); rows.delete(id); }
+    if (!visible.has(id)) { tr.remove(); rows.delete(id); }
   }
-  const devices = sortedDevices();
   devices.forEach((d, i) => {
     let tr = rows.get(d.id);
     if (!tr) { tr = createRow(d.id); rows.set(d.id, tr); }
@@ -177,8 +270,10 @@ function renderDevices() {
     if (tbody.rows[i] !== tr) tbody.insertBefore(tr, tbody.rows[i] || null);
     updateRow(tr, d);
   });
-  $("#no-devices").hidden = devices.length > 0;
+  $("#no-devices").hidden = state.devices.size > 0;
+  $("#no-match").hidden = state.devices.size === 0 || devices.length > 0;
   $("#select-all").checked = devices.length > 0 && devices.every((d) => state.selected.has(d.id));
+  renderFilters();
   renderSummary();
 }
 
@@ -192,7 +287,7 @@ function renderSummary() {
 }
 
 function renderToolbar() {
-  const selected = [...state.selected].map((id) => state.devices.get(id)).filter(Boolean);
+  const selected = visibleSelected();
   const hws = new Set(selected.map((d) => d.hw));
   const select = $("#deploy-fw");
   const previous = select.value;
@@ -368,13 +463,13 @@ $("#upload").addEventListener("submit", async (e) => {
 // --- Wiring ------------------------------------------------------------------
 
 $("#select-all").addEventListener("change", (e) => {
-  for (const d of state.devices.values()) e.target.checked ? state.selected.add(d.id) : state.selected.delete(d.id);
+  for (const d of visibleDevices()) e.target.checked ? state.selected.add(d.id) : state.selected.delete(d.id);
   renderDevices();
   renderToolbar();
 });
 
 $("#deploy-btn").addEventListener("click", () => {
-  deploy(Number($("#deploy-fw").value), [...state.selected]);
+  deploy(Number($("#deploy-fw").value), visibleSelected().map((d) => d.id));
 });
 
 async function resync() {
@@ -435,6 +530,7 @@ function connect() {
   es.addEventListener("firmwares", async () => {
     state.firmwares = await api("GET", "/api/firmwares");
     renderFirmwares();
+    renderDevices();  // "outdated" depends on the newest firmware
     renderToolbar();
   });
   es.addEventListener("resync", () => resync());
@@ -447,7 +543,11 @@ setInterval(() => {
     if (d) refreshSeen(tr, d);
   }
   renderSummary();
+  // Devices drift online/offline as time passes: re-filter when that matters.
+  if (state.filter.show === "online" || state.filter.show === "offline") renderDevices();
+  else renderFilters();
   if (panelDeviceId !== null) renderPanel();
 }, 1000);
 
+loadFilterFromUrl();
 connect();
