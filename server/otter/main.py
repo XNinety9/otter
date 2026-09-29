@@ -3,13 +3,14 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Response
+from fastapi import Depends, FastAPI, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
 
-from . import api_device, api_rollouts, api_ui, config
+from . import api_auth, api_device, api_rollouts, api_ui, config
+from .auth import require_user
 from .db import engine
 from .events import broadcaster, wakeups
 from .metrics import REGISTRY
@@ -66,12 +67,13 @@ def healthz():
     return {"status": "ok"}
 
 
-@app.get("/metrics", include_in_schema=False)
+@app.get("/metrics", include_in_schema=False, dependencies=[Depends(require_user)])
 def metrics():
     """Prometheus scrape endpoint."""
     return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
+app.include_router(api_auth.router)
 app.include_router(api_device.router)
 app.include_router(api_ui.router)
 app.include_router(api_rollouts.router)

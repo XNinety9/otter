@@ -111,3 +111,41 @@ class Rollout(Base):
 
     firmware: Mapped[Firmware] = relationship(lazy="joined")
     deployments: Mapped[list[Deployment]] = relationship(back_populates="rollout", order_by=Deployment.id)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    password_hash: Mapped[str]  # argon2
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class AuthSession(Base):
+    """A browser login. Only a hash of the cookie's token is stored."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    expires_at: Mapped[datetime]
+
+    user: Mapped[User] = relationship(lazy="joined")
+
+
+class ApiToken(Base):
+    """For scripts, CI and Prometheus: sent as `Authorization: Bearer otk_…`."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    last_used_at: Mapped[datetime | None]
+
+    user: Mapped[User] = relationship(lazy="joined")
