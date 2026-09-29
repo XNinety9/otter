@@ -28,6 +28,10 @@ Content-Type: application/json
   "rssi": -61,                    // optional, Wi-Fi signal in dBm
   "uptime_s": 3600,               // optional
   "ota_slot_size": 1966080,       // optional, bytes available for an update image (see below)
+  "free_heap": 284104,            // optional, health: free heap in bytes
+  "min_free_heap": 251360,        // optional, lowest free heap since boot
+  "reset_reason": "power_on",     // optional, why the device last restarted (see below)
+  "boot_count": 17,               // optional, incremented at each boot
   "wait_s": 30                    // optional, long polling (see below)
 }
 ```
@@ -63,6 +67,15 @@ ESP-IDF (`esp_ota_get_next_update_partition(NULL)->size`), `ESP.getFreeSketchSpa
 Arduino. The server never sends a device an image bigger than that: deploying one to it is
 refused, and tag deployments, rollouts and release channels skip it. Without the field, the
 server can't check and trusts the device; a check-in without it keeps the last value.
+
+### Health
+
+`reset_reason` is one of `power_on`, `software` (restart, e.g. after an update), `deep_sleep`,
+`external` (reset pin), `panic`, `int_watchdog`, `task_watchdog`, `watchdog`, `brownout`,
+`power_glitch`, `cpu_lockup`, `usb`, `jtag`, `sdio`, `efuse`, `unknown` (lowercase letters,
+digits and `_`). The server flags a device that restarted (a new `boot_count`, or `uptime_s`
+going down) because of a panic, watchdog, brownout, power glitch or CPU lockup: highlighted in the UI, counted in `otter_device_crashes_total`
+and notified as `device_crashed`.
 
 ### Long polling
 

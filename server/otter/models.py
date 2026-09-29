@@ -8,6 +8,8 @@ from .db import Base, utcnow
 # queued: waiting for a later stage of a rollout, invisible to the device.
 ACTIVE_STATES = ("pending", "downloading", "rebooting")
 OPEN_STATES = ("queued", *ACTIVE_STATES)
+# Reset reasons that mean the firmware crashed or the hardware is struggling.
+CRASH_RESETS = {"panic", "int_watchdog", "task_watchdog", "watchdog", "brownout", "power_glitch", "cpu_lockup"}
 FINAL_STATES = ("success", "failed", "cancelled")
 
 
@@ -41,6 +43,10 @@ class Device(Base):
     rssi: Mapped[int | None]
     uptime_s: Mapped[int | None]
     ota_slot_size: Mapped[int | None]  # bytes available for an update image, as the device reports it
+    free_heap: Mapped[int | None]
+    min_free_heap: Mapped[int | None]  # lowest since boot
+    reset_reason: Mapped[str | None]  # why the device last restarted: power_on, panic, brownout…
+    boot_count: Mapped[int | None]
     first_seen: Mapped[datetime] = mapped_column(default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(default=utcnow)
     channel: Mapped[str | None]  # follows this release channel automatically; None = manual updates

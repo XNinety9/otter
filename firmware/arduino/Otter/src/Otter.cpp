@@ -12,6 +12,7 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include <WiFi.h>
+#include <esp_system.h>
 #include <mbedtls/sha256.h>
 #include <sdkconfig.h>
 #define OTTER_DEFAULT_HW CONFIG_IDF_TARGET
@@ -20,6 +21,36 @@
 #endif
 
 namespace {
+
+// Why the device last restarted, in the protocol's vocabulary.
+const char *resetReason() {
+#if defined(ESP8266)
+  switch (ESP.getResetInfoPtr()->reason) {
+    case REASON_DEFAULT_RST: return "power_on";
+    case REASON_WDT_RST: return "watchdog";
+    case REASON_EXCEPTION_RST: return "panic";
+    case REASON_SOFT_WDT_RST: return "task_watchdog";
+    case REASON_SOFT_RESTART: return "software";
+    case REASON_DEEP_SLEEP_AWAKE: return "deep_sleep";
+    case REASON_EXT_SYS_RST: return "external";
+    default: return "unknown";
+  }
+#else
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power_on";
+    case ESP_RST_EXT: return "external";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT: return "int_watchdog";
+    case ESP_RST_TASK_WDT: return "task_watchdog";
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep_sleep";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_SDIO: return "sdio";
+    default: return "unknown";
+  }
+#endif
+}
 
 constexpr uint32_t kRetryMs = 10000;
 constexpr uint32_t kHttpTimeoutMs = 15000;
@@ -105,6 +136,12 @@ bool OtterAgent::checkin(Order &order) {
   doc["rssi"] = WiFi.RSSI();
   doc["uptime_s"] = millis() / 1000;
   doc["ota_slot_size"] = ESP.getFreeSketchSpace();  // room for an update image
+  doc["free_heap"] = ESP.getFreeHeap();
+#if defined(ESP32)
+  doc["min_free_heap"] = ESP.getMinFreeHeap();
+#endif
+  // No boot_count: the server spots restarts from uptime_s going down.
+  doc["reset_reason"] = resetReason();
   String body;
   serializeJson(doc, body);
 

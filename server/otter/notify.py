@@ -36,6 +36,7 @@ NTFY_TAGS = {
     "device_offline": ["zzz"],
     "device_online": ["white_check_mark"],
     "device_new": ["new"],
+    "device_crashed": ["boom"],
     "test": ["test_tube"],
 }
 DISCORD_COLOR = {INFO: 0x2F6FDF, WARNING: 0xC98A00, ERROR: 0xD64545}
@@ -164,6 +165,10 @@ def build(event: str, ids: dict) -> Message | None:
             return Message(event, f"{label(device)} is back online", where, INFO, data)
         if event == "device_new":
             return Message(event, f"New device: {label(device)}", where, INFO, data)
+        if event == "device_crashed":
+            data["reset_reason"] = ids["reason"]  # the device may have restarted again since
+            reason = ids["reason"].replace("_", " ")
+            return Message(event, f"{label(device)} restarted after a {reason}", where, WARNING, data)
     raise ValueError(f"unknown event {event}")
 
 

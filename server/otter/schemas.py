@@ -44,6 +44,10 @@ class CheckinIn(BaseModel):
     rssi: int | None = None
     uptime_s: int | None = None
     ota_slot_size: int | None = Field(default=None, ge=0)
+    free_heap: int | None = Field(default=None, ge=0)
+    min_free_heap: int | None = Field(default=None, ge=0)
+    reset_reason: str | None = Field(default=None, max_length=32, pattern=r"^[a-z0-9_]+$")
+    boot_count: int | None = Field(default=None, ge=0)
     # Long polling: if no update is ready, the server may hold the request up to this long.
     wait_s: int = Field(default=0, ge=0)
 
@@ -123,6 +127,10 @@ class DeviceOut(BaseModel):
     rssi: int | None
     uptime_s: int | None
     ota_slot_size: int | None = None
+    free_heap: int | None = None
+    min_free_heap: int | None = None
+    reset_reason: str | None = None
+    boot_count: int | None = None
     first_seen: UtcDatetime
     last_seen: UtcDatetime
     last_deployment: DeploymentOut | None

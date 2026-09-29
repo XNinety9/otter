@@ -194,7 +194,7 @@ and SHA-256 are checked before rebooting.
 ## Notifications
 
 Otter can alert you when a deployment fails, a staged rollout halts, a device goes offline (and
-comes back), or a new device shows up. List the targets in `OTTER_NOTIFY_URLS`, separated by spaces
+comes back), restarts after a crash (panic, watchdog, brownout), or a new device shows up. List the targets in `OTTER_NOTIFY_URLS`, separated by spaces
 or commas:
 
 | Target | Format |
@@ -241,6 +241,7 @@ can publish on it could then trigger updates. `OTTER_MQTT_DISCOVERY_PREFIX` (def
 | `otter_firmware_downloads_total` | counter | `app`, `version` |
 | `otter_firmware_download_bytes_total` | counter | |
 | `otter_deployment_outcomes_total` | counter | `status` (`success`, `failed`, `cancelled`) |
+| `otter_device_crashes_total` | counter | `app`, `reason` (`panic`, `task_watchdog`, `brownout`…) |
 
 ```yaml
 # prometheus.yml

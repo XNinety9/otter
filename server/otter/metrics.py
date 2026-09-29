@@ -33,6 +33,7 @@ GCCollector(registry=REGISTRY)
 CHECKINS = Counter("otter_checkins", "Device check-ins received", ["app"], registry=REGISTRY)
 DOWNLOADS = Counter("otter_firmware_downloads", "Firmware downloads started", ["app", "version"], registry=REGISTRY)
 DOWNLOAD_BYTES = Counter("otter_firmware_download_bytes", "Bytes of firmware served", registry=REGISTRY)
+CRASHES = Counter("otter_device_crashes", "Device restarts after a crash (panic, watchdog, brownout…)", ["app", "reason"], registry=REGISTRY)
 OUTCOMES = Counter("otter_deployment_outcomes", "Deployments reaching a final state", ["status"], registry=REGISTRY)
 
 
