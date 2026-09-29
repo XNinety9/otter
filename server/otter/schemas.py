@@ -43,6 +43,7 @@ class CheckinIn(BaseModel):
     ip: str | None = None
     rssi: int | None = None
     uptime_s: int | None = None
+    ota_slot_size: int | None = Field(default=None, ge=0)
     # Long polling: if no update is ready, the server may hold the request up to this long.
     wait_s: int = Field(default=0, ge=0)
 
@@ -121,6 +122,7 @@ class DeviceOut(BaseModel):
     ip: str | None
     rssi: int | None
     uptime_s: int | None
+    ota_slot_size: int | None = None
     first_seen: UtcDatetime
     last_seen: UtcDatetime
     last_deployment: DeploymentOut | None

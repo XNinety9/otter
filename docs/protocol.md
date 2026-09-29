@@ -27,6 +27,7 @@ Content-Type: application/json
   "ip": "192.168.1.42",           // optional, server falls back to the TCP peer address
   "rssi": -61,                    // optional, Wi-Fi signal in dBm
   "uptime_s": 3600,               // optional
+  "ota_slot_size": 1966080,       // optional, bytes available for an update image (see below)
   "wait_s": 30                    // optional, long polling (see below)
 }
 ```
@@ -54,6 +55,14 @@ or, when an update is scheduled for this device:
   }
 }
 ```
+
+### OTA slot size
+
+`ota_slot_size` is the room for an update image: the size of the next OTA partition on
+ESP-IDF (`esp_ota_get_next_update_partition(NULL)->size`), `ESP.getFreeSketchSpace()` on
+Arduino. The server never sends a device an image bigger than that: deploying one to it is
+refused, and tag deployments, rollouts and release channels skip it. Without the field, the
+server can't check and trusts the device; a check-in without it keeps the last value.
 
 ### Long polling
 

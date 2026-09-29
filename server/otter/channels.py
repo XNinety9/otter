@@ -51,6 +51,8 @@ def reconcile(session: Session) -> Changes:
             continue
         if any(d.status in OPEN_STATES for d in device.deployments):
             continue
+        if not device.fits(newest):
+            continue  # the UI shows the device's slot size
         if any(d.firmware_id == newest.id and d.status in ("failed", "cancelled") for d in device.deployments):
             continue  # already tried: redeploy it by hand if needed
         device.deployments.append(Deployment(firmware=newest))

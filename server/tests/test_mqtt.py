@@ -77,12 +77,13 @@ def test_update_available_and_progress(ha, client, checkin, upload):
 def test_latest_version_follows_the_device_channel(ha, client, checkin):
     checkin(mac=MAC)
     ha.publish_all()
-    ha._firmwares = [("weather", "esp32", "1.2.0", "beta"), ("weather", "esp32", "1.1.0", "stable")]
+    ha._firmwares = [("weather", "esp32", "1.2.0", "beta", 1000), ("weather", "esp32", "1.1.0", "stable", 1000)]
     device = client.get("/api/devices").json()[0]
     assert ha.latest_version(device) == "1.2.0"  # manual updates: newest in the registry
     assert ha.latest_version({**device, "channel": "stable"}) == "1.1.0"
     assert ha.latest_version({**device, "channel": "beta"}) == "1.2.0"
     assert ha.latest_version({**device, "fw_version": "2.0.0"}) == "2.0.0"  # nothing newer
+    assert ha.latest_version({**device, "ota_slot_size": 999}) == "1.0.0"  # nothing fits
 
 
 def test_only_changes_are_republished(ha, checkin):

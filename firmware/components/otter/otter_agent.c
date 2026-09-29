@@ -190,6 +190,10 @@ static char *build_checkin_body(void)
     cJSON_AddStringToObject(obj, "app", s_cfg.app_name);
     cJSON_AddStringToObject(obj, "fw_version", s_cfg.version);
     cJSON_AddNumberToObject(obj, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+    const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
+    if (slot) {
+        cJSON_AddNumberToObject(obj, "ota_slot_size", slot->size);
+    }
     cJSON_AddNumberToObject(obj, "wait_s", checkin_wait_s());
 
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");

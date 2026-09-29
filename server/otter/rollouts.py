@@ -76,9 +76,12 @@ def create(
     targets = list(session.scalars(query).all())
     if channel:
         targets = [d for d in targets if is_newer(fw.version, d.fw_version)]
+    scope = f" tagged {', '.join(tags)}" if tags else f" following {channel}" if channel else ""
     if not targets:
-        scope = f" tagged {', '.join(tags)}" if tags else f" following {channel}" if channel else ""
         raise RolloutError(f"no {fw.app} / {fw.hw} device{scope} needs {fw.version}")
+    targets = [d for d in targets if d.fits(fw)]
+    if not targets:
+        raise RolloutError(f"{fw.app} {fw.version} is too big for the OTA slot of every device{scope}")
     if channel:
         fw.channel = channel
 

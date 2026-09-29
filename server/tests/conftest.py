@@ -62,9 +62,9 @@ def upload(client):
 
 @pytest.fixture
 def checkin(client):
-    def _checkin(version="1.0.0", mac="AA:BB:CC:00:00:01", app="weather", hw="esp32"):
+    def _checkin(version="1.0.0", mac="AA:BB:CC:00:00:01", app="weather", hw="esp32", **extra):
         res = client.post(
-            "/api/v1/checkin", json={"mac": mac, "hw": hw, "app": app, "fw_version": version, "rssi": -60}
+            "/api/v1/checkin", json={"mac": mac, "hw": hw, "app": app, "fw_version": version, "rssi": -60, **extra}
         )
         assert res.status_code == 200, res.text
         return res.json()
