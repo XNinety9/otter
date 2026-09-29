@@ -50,7 +50,8 @@ header {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-header h1 { margin: 0; font-size: 20px; }
+header h1 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+header h1 img { display: block; }
 #summary { flex: 1; }
 
 main { max-width: 1280px; margin: 0 auto; padding: 24px; display: grid; gap: 32px; }
