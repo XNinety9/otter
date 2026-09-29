@@ -72,6 +72,33 @@ docker run -d --name otter -p 8000:8000 -v otter-data:/data ghcr.io/xninety9/ott
 The container runs as UID 1000. With a bind mount instead of a volume, make sure that user can
 write to the directory. `GET /healthz` reports whether the server and its database are up.
 
+## Accounts and API tokens
+
+The dashboard and its API require an account. Create the first one on the server:
+
+```sh
+cd server && uv run python -m otter.cli create-user admin
+# with Docker:
+docker compose exec otter python -m otter.cli create-user admin
+```
+
+Upgrading from a version without accounts: the dashboard shows a login page until you create one.
+
+Scripts, CI and Prometheus use API tokens instead (`Authorization: Bearer otk_…`):
+
+```sh
+uv run python -m otter.cli create-token push --user admin   # printed once
+uv run python -m otter.cli list-tokens
+uv run python -m otter.cli revoke-token push
+```
+
+`tools/push.sh` sends `$OTTER_TOKEN` when it is set. Other commands: `set-password` (closes the
+user's sessions), `list-users`, `delete-user`.
+
+Passwords are hashed with argon2; sessions and tokens are stored as SHA-256 hashes only. Logins are
+limited to 10 failures per address every 5 minutes. **Serve Otter over HTTPS as soon as it leaves
+your desk**: over plain HTTP, passwords and cookies can be sniffed on the network (see #17).
+
 ## Try it without hardware
 
 ```sh
@@ -108,7 +135,7 @@ The device shows up in the dashboard within seconds. To ship an update, bump the
 
 ```sh
 pio run
-../../../tools/push.sh .pio/build/esp32/firmware.bin otter-demo esp32 1.0.1
+OTTER_TOKEN=otk_… ../../../tools/push.sh .pio/build/esp32/firmware.bin otter-demo esp32 1.0.1
 ```
 
 With ESP-IDF, a new firmware is marked valid once it reaches the server (or when the app calls
@@ -156,6 +183,8 @@ curl -X POST http://localhost:8000/api/notifications/test
 # prometheus.yml
 scrape_configs:
   - job_name: otter
+    authorization:
+      credentials: otk_…   # python -m otter.cli create-token prometheus --user admin
     static_configs:
       - targets: ["otter.local:8000"]
 ```

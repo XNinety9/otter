@@ -9,21 +9,36 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
-from otter.db import Base, engine  # noqa: E402
+from otter.auth import hash_password, throttle  # noqa: E402
+from otter.db import Base, SessionLocal, engine  # noqa: E402
+from otter.models import User  # noqa: E402
 from otter.main import app  # noqa: E402
 
 
 def reset_database() -> None:
     """Empty database: no tables, no migration history."""
+    throttle._failures.clear()
     Base.metadata.drop_all(engine)
     with engine.begin() as conn:
         conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
 
 
+TEST_USER, TEST_PASSWORD = "admin", "correct horse battery"
+
+
+def create_user(username=TEST_USER, password=TEST_PASSWORD):
+    with SessionLocal() as session:
+        session.add(User(username=username, password_hash=hash_password(password)))
+        session.commit()
+
+
 @pytest.fixture
 def client():
+    """Logged in as an admin; call client.cookies.clear() to act anonymously."""
     reset_database()
     with TestClient(app) as c:
+        create_user()
+        assert c.post("/api/auth/login", json={"username": TEST_USER, "password": TEST_PASSWORD}).status_code == 200
         yield c
 
 

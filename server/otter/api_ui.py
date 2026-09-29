@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from . import config
 from .api_device import publish_device
+from .auth import require_user
 from .db import get_session
 from .events import broadcaster, wakeups
 from .notify import INFO, Message, notifier
@@ -18,7 +19,7 @@ from .rollouts import cancel_open_deployments
 from .schemas import DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, TagOut
 from .storage import delete_firmware_file, store_firmware
 
-router = APIRouter(prefix="/api", tags=["ui"])
+router = APIRouter(prefix="/api", tags=["ui"], dependencies=[Depends(require_user)])
 
 
 @router.get("/config")

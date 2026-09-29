@@ -34,6 +34,8 @@
 }
 
 * { box-sizing: border-box; }
+/* `hidden` must win over any display rule (e.g. grid cards). */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -99,7 +101,6 @@ tr.offline td:not(.actions):not(.check) { opacity: .55; }
 th.check, td.check { width: 32px; }
 .update-col { width: 240px; }
 .empty { margin: 0; padding: 24px; text-align: center; color: var(--muted); }
-.empty[hidden] { display: none; }
 
 button, select, input {
   font: inherit;
@@ -132,7 +133,6 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .signal i.on { background: var(--text); }
 
 .bar { height: 6px; background: var(--track); border-radius: 99px; overflow: hidden; }
-.bar[hidden] { display: none; }
 .fill { height: 100%; width: 0; background: var(--accent); border-radius: 99px; transition: width .6s ease, background-color .3s; }
 .st-pending .fill { width: 100% !important; background: repeating-linear-gradient(-45deg, var(--track) 0 6px, color-mix(in srgb, var(--accent) 35%, transparent) 6px 12px); background-size: 17px 17px; animation: stripes 1s linear infinite; }
 .st-rebooting .fill { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
@@ -210,6 +210,16 @@ dialog#rollout-dialog::backdrop { background: rgb(0 0 0 / .45); }
 .rollout-form .preview { color: var(--text); }
 .toolbar.end { justify-content: flex-end; }
 @media (max-width: 480px) { .form-grid { grid-template-columns: 1fr; } }
+
+.login-page { display: grid; place-items: center; min-height: 100vh; }
+.login { width: min(360px, calc(100vw - 32px)); display: grid; justify-items: center; gap: 8px; padding: 24px 0; }
+.login h1 { margin: 0 0 12px; font-size: 24px; }
+.login form, .login .setup { width: 100%; padding: 20px; display: grid; gap: 12px; }
+.login label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.login .error { margin: 0; color: var(--err); font-size: 13px; }
+.login .setup { font-size: 13px; gap: 6px; }
+.login pre { margin: 0; padding: 8px 10px; overflow-x: auto; font-family: var(--mono); font-size: 12px; background: var(--track); border-radius: 6px; }
+#user { font-size: 13px; }
 
 #toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 10; }
 .toast { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / .15); max-width: 380px; }

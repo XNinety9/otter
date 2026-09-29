@@ -9,13 +9,14 @@ from sqlalchemy.orm import Session, selectinload
 
 from . import rollouts
 from .api_device import publish_device
+from .auth import require_user
 from .db import SessionLocal, get_session
 from .events import broadcaster, wakeups
 from .models import Device, Firmware, Rollout
 from .notify import notifier
 from .schemas import RolloutIn, RolloutOut
 
-router = APIRouter(prefix="/api", tags=["ui"])
+router = APIRouter(prefix="/api", tags=["ui"], dependencies=[Depends(require_user)])
 
 
 def rollout_out(rollout: Rollout) -> RolloutOut:

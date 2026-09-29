@@ -23,6 +23,10 @@ async function api(method, path, body) {
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(path, opts);
+  if (res.status === 401) {
+    goToLogin();
+    throw new Error("session expired");
+  }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try {
@@ -32,6 +36,10 @@ async function api(method, path, body) {
     throw new Error(msg);
   }
   return res.status === 204 ? null : res.json();
+}
+
+function goToLogin() {
+  location.href = `/login.html?next=${encodeURIComponent(location.pathname + location.search)}`;
 }
 
 function toast(msg, kind = "") {
@@ -743,9 +751,14 @@ function connect() {
     live.classList.add("on");
     resync().catch((e) => toast(e.message, "err"));
   });
-  es.addEventListener("error", () => {
+  es.addEventListener("error", async () => {
     live.textContent = "reconnecting…";
     live.classList.remove("on");
+    // The stream also fails when the session ends: go back to the login page then.
+    try {
+      const status = await (await fetch("/api/auth/status")).json();
+      if (!status.user) goToLogin();
+    } catch {}
   });
   es.addEventListener("device", (e) => {
     const d = JSON.parse(e.data);
@@ -788,5 +801,17 @@ setInterval(() => {
   if (state.rollouts.some((r) => r.next_stage_at)) renderRollouts();  // countdowns
 }, 1000);
 
-loadFilterFromUrl();
-connect();
+$("#logout").addEventListener("click", async () => {
+  await fetch("/api/auth/logout", { method: "POST" });
+  location.href = "/login.html";
+});
+
+async function start() {
+  const status = await (await fetch("/api/auth/status")).json();
+  if (!status.user) return goToLogin();
+  $("#user").textContent = status.user;
+  loadFilterFromUrl();
+  connect();
+}
+
+start();
