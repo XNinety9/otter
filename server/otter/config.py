@@ -17,6 +17,11 @@ CHECKIN_INTERVAL_S = int(os.environ.get("OTTER_CHECKIN_INTERVAL", "30"))
 # A device is "online" if it checked in within this delay (same rule as the web UI).
 ONLINE_TIMEOUT_S = CHECKIN_INTERVAL_S * 2.5 + 5
 
+# Tries per deployment when a device reports a transient (network) failure, and the base
+# delay before handing it out again (multiplied by the attempt number).
+DEPLOY_ATTEMPTS = int(os.environ.get("OTTER_DEPLOY_ATTEMPTS", "3"))
+RETRY_DELAY_S = float(os.environ.get("OTTER_RETRY_DELAY", "10"))
+
 # Notification targets, space or comma separated (see otter/notify.py). Empty = off.
 NOTIFY_URLS = os.environ.get("OTTER_NOTIFY_URLS", "")
 # Alert when a device hasn't checked in for this long (0 = never).

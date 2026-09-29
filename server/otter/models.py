@@ -83,6 +83,8 @@ class Deployment(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
+    attempts: Mapped[int] = mapped_column(default=1, server_default="1")  # 1 + retries so far
+    retry_at: Mapped[datetime | None]  # a retried deployment isn't handed out before this
     rollout_id: Mapped[int | None] = mapped_column(ForeignKey("rollouts.id", ondelete="SET NULL"))
     stage: Mapped[int | None]  # index of the rollout stage this deployment belongs to
 
