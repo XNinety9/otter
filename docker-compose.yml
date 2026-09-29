@@ -1,0 +1,19 @@
+# Otter server. Firmware images and the SQLite database live in the `otter-data` volume.
+#   docker compose up -d        then open http://<host>:8000
+services:
+  otter:
+    build: ./server
+    ports:
+      - "8000:8000"
+    environment:
+      OTTER_CHECKIN_INTERVAL: ${OTTER_CHECKIN_INTERVAL:-30}
+      # Shared secret devices send in X-Otter-Key (empty = no check, LAN only!).
+      OTTER_FLEET_KEY: ${OTTER_FLEET_KEY:-}
+      # Base URL devices use to download firmware, if the host header isn't reliable.
+      OTTER_PUBLIC_URL: ${OTTER_PUBLIC_URL:-}
+    volumes:
+      - otter-data:/data
+    restart: unless-stopped
+
+volumes:
+  otter-data:
