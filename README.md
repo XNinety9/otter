@@ -9,6 +9,11 @@ Fleet tracking and centralized OTA updates for home-made ESP32 / ESP8266 devices
 - **Firmware registry**: upload `.bin` images, versioned per application and hardware family.
 - **OTA deployments**: target one device, a selection, a tag, or roll out a version to every device
   of an app. Progress streams live to the browser.
+- **Staged rollouts**: release a firmware progressively (e.g. 10 %, 50 %, 100 % of the devices,
+  optionally within a tag). Each stage starts once the previous one succeeded and a soak time
+  has passed; if failures exceed a threshold, the rollout halts before touching the rest of the
+  fleet. Canaries are picked among online devices. Pause, resume, skip to the next stage or abort
+  from the UI.
 - **Tags**: group devices (`living-room`, `test-bench`…), filter the dashboard by tag and roll out
   to a tag. A tag deployment only targets the tagged devices running the firmware's app and
   hardware, and skips those already on that version.

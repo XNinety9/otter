@@ -3,6 +3,7 @@ import tempfile
 
 # Must be set before otter.config is imported.
 os.environ["OTTER_DATA_DIR"] = tempfile.mkdtemp(prefix="otter-test-")
+os.environ["OTTER_ROLLOUT_TICK"] = "0"  # tests drive rollout evaluation themselves
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

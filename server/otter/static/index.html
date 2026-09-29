@@ -50,6 +50,14 @@
       </div>
     </section>
 
+    <section id="rollouts-section">
+      <div class="section-head">
+        <h2>Staged rollouts</h2>
+      </div>
+      <div id="rollouts"></div>
+      <p id="no-rollouts" class="empty card">No staged rollout yet. Use <strong>Staged…</strong> on a firmware to release it progressively.</p>
+    </section>
+
     <section>
       <div class="section-head">
         <h2>Firmwares</h2>
@@ -106,6 +114,25 @@
       </table>
       <p class="empty history-empty">No deployment yet.</p>
     </div>
+  </dialog>
+
+  <dialog id="rollout-dialog" aria-labelledby="rollout-title">
+    <form method="dialog" class="rollout-form">
+      <h2 id="rollout-title"></h2>
+      <p class="muted">Devices not on this version are split into stages. Each stage starts once the previous
+        one succeeded and the soak time has passed; too many failures halt the rollout.</p>
+      <div class="form-grid">
+        <label>Stages (cumulative %) <input name="stages" value="10, 50, 100" required></label>
+        <label>Soak time (minutes) <input name="soak" type="number" min="0" step="1" value="5" required></label>
+        <label>Halt above (% failed) <input name="rate" type="number" min="0" max="100" step="1" value="20" required></label>
+        <label>Tag <select name="tag"></select></label>
+      </div>
+      <p class="preview"></p>
+      <div class="toolbar end">
+        <button value="cancel" formnovalidate class="ghost">Cancel</button>
+        <button value="start" class="primary">Start rollout</button>
+      </div>
+    </form>
   </dialog>
 
   <div id="toasts" aria-live="polite"></div>

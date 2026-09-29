@@ -4,6 +4,7 @@ const state = {
   devices: new Map(),
   firmwares: [],
   selected: new Set(),
+  rollouts: [],
   interval: 30,
   filter: { q: "", show: "all", tag: "" },
 };
@@ -117,6 +118,7 @@ function updateStatusText(d) {
     case "success": return `✓ updated to ${v} · ${ago(dep.updated_at)}`;
     case "failed": return `✗ ${v} failed: ${dep.error || "unknown error"}`;
     case "cancelled": return `${v} cancelled`;
+    case "queued": return `queued for ${v} · rollout stage ${dep.stage + 1}`;
   }
 }
 
@@ -486,6 +488,7 @@ function renderFirmwares() {
       <td title="${esc(new Date(f.uploaded_at).toLocaleString())}">${ago(f.uploaded_at)}</td>
       <td class="muted">${esc(f.notes)}</td>
       <td class="actions">
+        <button class="staged ghost" title="Release ${esc(f.app)} ${esc(f.version)} progressively, in stages">Staged…</button>
         <button class="rollout ghost" title="Deploy to every ${esc(f.app)} / ${esc(f.hw)} device${state.filter.tag ? ` tagged #${esc(state.filter.tag)}` : ""} not on this version">Roll out${state.filter.tag ? ` to #${esc(state.filter.tag)}` : ""}</button>
         <button class="delete ghost danger" title="Delete">✕</button>
       </td>
@@ -511,6 +514,8 @@ $("#firmwares tbody").addEventListener("click", async (e) => {
     if (!targets.length) return toast(`Every ${scope} already runs ${fw.version}.`);
     // With a tag, let the server resolve its members: same result, one source of truth.
     await deploy(fw.id, tag ? { tags: [tag] } : { device_ids: targets.map((d) => d.id) }, targets.length, tag);
+  } else if (e.target.closest(".staged")) {
+    openRolloutDialog(fw);
   } else if (e.target.closest(".delete")) {
     if (!confirm(`Delete ${fw.app} ${fw.version} (${fw.hw})?`)) return;
     try { await api("DELETE", `/api/firmwares/${fw.id}`); } catch (err) { toast(err.message, "err"); }
@@ -533,6 +538,160 @@ $("#upload").addEventListener("submit", async (e) => {
   }
 });
 
+// --- Staged rollouts ---------------------------------------------------------
+
+const OPEN_ROLLOUTS = new Set(["running", "paused", "halted"]);
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+async function loadRollouts() {
+  try {
+    state.rollouts = await api("GET", "/api/rollouts?limit=10");
+  } catch (e) {
+    return toast(e.message, "err");
+  }
+  renderRollouts();
+}
+
+// Device events change rollout stats: refetch, at most twice a second.
+let rolloutsTimer = null;
+function refreshRolloutsSoon() {
+  if (rolloutsTimer) return;
+  rolloutsTimer = setTimeout(() => {
+    rolloutsTimer = null;
+    loadRollouts();
+  }, 500);
+}
+
+function until(iso) {
+  const s = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 1000));
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+}
+
+function rolloutActions(r) {
+  const last = r.current_stage + 1 >= r.stages.length;
+  return [
+    r.status === "running" && `<button class="ghost" data-action="pause">Pause</button>`,
+    r.status === "paused" && `<button class="ghost" data-action="resume">Resume</button>`,
+    OPEN_ROLLOUTS.has(r.status) && !last && `<button class="ghost" data-action="advance">Next stage now</button>`,
+    OPEN_ROLLOUTS.has(r.status) && `<button class="ghost danger" data-action="abort">Abort</button>`,
+  ].filter(Boolean).join("");
+}
+
+function renderRollouts() {
+  // Everything still open, plus the three most recent finished ones.
+  const open = state.rollouts.filter((r) => OPEN_ROLLOUTS.has(r.status));
+  const done = state.rollouts.filter((r) => !OPEN_ROLLOUTS.has(r.status)).slice(0, 3);
+  const shown = [...open, ...done];
+  $("#no-rollouts").hidden = shown.length > 0;
+  $("#rollouts").innerHTML = shown.map((r) => {
+    const target = r.tags.length ? r.tags.map((t) => `#${esc(t)}`).join(" ") : `all ${esc(r.firmware.app)} devices`;
+    const stages = r.stages.map((st, i) => {
+      const seg = (cls, n) => (n ? `<i class="${cls}" style="width:${(100 * n) / st.size}%"></i>` : "");
+      const current = i === r.current_stage && OPEN_ROLLOUTS.has(r.status);
+      return `
+        <div class="stage${current ? " current" : ""}">
+          <div class="label"><span>Stage ${i + 1} · ${plural(st.size, "device")}</span>
+            <span>${st.success}/${st.size}${st.failed ? ` · <span style="color:var(--err)">${st.failed} failed</span>` : ""}</span></div>
+          <div class="segments">${seg("success", st.success)}${seg("failed", st.failed)}${seg("active", st.active)}${seg("cancelled", st.cancelled)}</div>
+        </div>`;
+    }).join("");
+    const meta = [
+      `started ${ago(r.created_at)}`,
+      `soak ${Math.round(r.soak_s / 60)} min`,
+      `halts above ${Math.round(r.max_failure_rate * 100)} % failed`,
+      r.next_stage_at && `<strong>next stage in ${until(r.next_stage_at)}</strong>`,
+    ].filter(Boolean).join(" · ");
+    return `
+      <article class="rollout card" data-id="${r.id}">
+        <div class="rollout-head">
+          <span class="title">${esc(r.firmware.app)} <span class="mono">${esc(r.firmware.version)}</span> → ${target}</span>
+          <span class="badge ${esc(r.status)}">${esc(r.status)}</span>
+          <div class="toolbar">${rolloutActions(r)}</div>
+        </div>
+        ${r.message ? `<p class="message">⚠ ${esc(r.message)}</p>` : ""}
+        <div class="stages">${stages}</div>
+        <p class="meta">${meta}</p>
+      </article>`;
+  }).join("");
+}
+
+$("#rollouts").addEventListener("click", async (e) => {
+  const button = e.target.closest("button[data-action]");
+  if (!button) return;
+  const id = Number(button.closest(".rollout").dataset.id);
+  const { action } = button.dataset;
+  if (action === "abort" && !confirm("Abort this rollout? Deployments that haven't started flashing are cancelled.")) return;
+  try {
+    await api("POST", `/api/rollouts/${id}/${action}`);
+  } catch (err) {
+    toast(err.message, "err");
+  }
+});
+
+// Same split as the server (otter/rollouts.py stage_sizes).
+function stageSizes(total, percentages) {
+  const sizes = [];
+  let done = 0;
+  for (const pct of percentages) {
+    const upto = pct >= 100 ? total : Math.min(total, Math.max(done + 1, Math.floor((total * pct) / 100)));
+    if (upto > done) {
+      sizes.push(upto - done);
+      done = upto;
+    }
+  }
+  return sizes;
+}
+
+const rolloutDialog = $("#rollout-dialog");
+let rolloutFirmware = null;
+
+function openRolloutDialog(fw) {
+  rolloutFirmware = fw;
+  const form = $("form", rolloutDialog);
+  $("#rollout-title").textContent = `Staged rollout of ${fw.app} ${fw.version} (${fw.hw})`;
+  form.tag.innerHTML = `<option value="">All ${esc(fw.app)} devices</option>` +
+    [...tagCounts().keys()].map((t) => `<option value="${esc(t)}">#${esc(t)}</option>`).join("");
+  form.tag.value = state.filter.tag;
+  updateRolloutPreview();
+  rolloutDialog.returnValue = "";  // otherwise Esc would replay the previous "start"
+  rolloutDialog.showModal();
+}
+
+function rolloutFormValues() {
+  const form = $("form", rolloutDialog);
+  return {
+    stages: form.stages.value.split(/[\s,;]+/).filter(Boolean).map(Number),
+    soak_s: Math.round(Number(form.soak.value) * 60),
+    max_failure_rate: Number(form.rate.value) / 100,
+    tags: form.tag.value ? [form.tag.value] : [],
+  };
+}
+
+function updateRolloutPreview() {
+  const fw = rolloutFirmware;
+  const { stages, tags } = rolloutFormValues();
+  const targets = [...state.devices.values()].filter(
+    (d) => d.app === fw.app && d.hw === fw.hw && d.fw_version !== fw.version && (!tags.length || d.tags.includes(tags[0])),
+  );
+  const valid = stages.length && stages.every((n, i) => n >= 1 && n <= 100 && (i === 0 || n > stages[i - 1])) && stages.at(-1) === 100;
+  const preview = $(".preview", rolloutDialog);
+  if (!valid) preview.textContent = "Stages must be increasing percentages ending with 100, e.g. 10, 50, 100.";
+  else if (!targets.length) preview.textContent = `No device needs ${fw.version}.`;
+  else preview.textContent = `${plural(targets.length, "device")} → stages of ${stageSizes(targets.length, stages).join(", ")}.`;
+  $("button[value=start]", rolloutDialog).disabled = !valid || !targets.length;
+}
+
+$("form", rolloutDialog).addEventListener("input", updateRolloutPreview);
+rolloutDialog.addEventListener("close", async () => {
+  if (rolloutDialog.returnValue !== "start") return;
+  try {
+    await api("POST", "/api/rollouts", { firmware_id: rolloutFirmware.id, ...rolloutFormValues() });
+    toast(`Rollout of ${rolloutFirmware.app} ${rolloutFirmware.version} started`, "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+});
+
 // --- Wiring ------------------------------------------------------------------
 
 $("#select-all").addEventListener("change", (e) => {
@@ -547,11 +706,14 @@ $("#deploy-btn").addEventListener("click", () => {
 });
 
 async function resync() {
-  const [cfg, devices, firmwares] = await Promise.all([
+  const [cfg, devices, firmwares, rollouts] = await Promise.all([
     api("GET", "/api/config"),
     api("GET", "/api/devices"),
     api("GET", "/api/firmwares"),
+    api("GET", "/api/rollouts?limit=10"),
   ]);
+  state.rollouts = rollouts;
+  renderRollouts();
   state.interval = cfg.checkin_interval_s;
   state.devices = new Map(devices.map((d) => [d.id, d]));
   for (const id of state.selected) if (!state.devices.has(id)) state.selected.delete(id);
@@ -588,6 +750,7 @@ function connect() {
   es.addEventListener("device", (e) => {
     const d = JSON.parse(e.data);
     announce(state.devices.get(d.id), d);
+    if (d.last_deployment?.rollout_id) refreshRolloutsSoon();
     state.devices.set(d.id, d);
     renderDevices();
     renderToolbar();
@@ -608,6 +771,7 @@ function connect() {
     renderToolbar();
   });
   es.addEventListener("resync", () => resync());
+  es.addEventListener("rollouts", () => loadRollouts());
 }
 
 // Keep "last seen" and online dots fresh between events.
@@ -621,6 +785,7 @@ setInterval(() => {
   if (state.filter.show === "online" || state.filter.show === "offline") renderDevices();
   else renderFilters();
   if (panelDeviceId !== null) renderPanel();
+  if (state.rollouts.some((r) => r.next_stage_at)) renderRollouts();  // countdowns
 }, 1000);
 
 loadFilterFromUrl();
