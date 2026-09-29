@@ -72,6 +72,7 @@ jobs:
           OTTER_FLEET_KEY: ${{ secrets.OTTER_FLEET_KEY }}
           OTTER_PUSH_URL: ${{ secrets.OTTER_PUSH_URL }}
           OTTER_CA_CERT: ${{ secrets.OTTER_CA_CERT }}
+          OTTER_SIGNING_KEY: ${{ secrets.OTTER_SIGNING_KEY }}
           OTTER_CHANNEL: ${{ vars.OTTER_CHANNEL }}
           # Upload only for tags (or when asked), and only with real Wi-Fi settings.
           OTTER_TOKEN: ${{ (github.event_name == 'push' || inputs.upload) && secrets.WIFI_SSID != '' && secrets.OTTER_TOKEN || '' }}

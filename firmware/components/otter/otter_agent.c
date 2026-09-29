@@ -19,6 +19,8 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "mbedtls/base64.h"
+#include "mbedtls/pk.h"
 #include "nvs.h"
 #include "psa/crypto.h"
 #include "sdkconfig.h"
@@ -45,6 +47,8 @@ typedef struct {
     char url[256];
     int size;
     char sha256[65];
+    unsigned char signature[512]; /* DER, decoded from the order's base64 */
+    size_t signature_len;         /* 0: unsigned */
 } update_order_t;
 
 static otter_config_t s_cfg;
@@ -445,6 +449,14 @@ static bool checkin(update_order_t *order)
             copy_string(update, "version", order->version, sizeof(order->version));
             copy_string(update, "url", order->url, sizeof(order->url));
             copy_string(update, "sha256", order->sha256, sizeof(order->sha256));
+            cJSON *signature = cJSON_GetObjectItem(update, "signature");
+            order->signature_len = 0;
+            if (cJSON_IsString(signature) &&
+                mbedtls_base64_decode(order->signature, sizeof(order->signature), &order->signature_len,
+                                      (const unsigned char *)signature->valuestring,
+                                      strlen(signature->valuestring)) != 0) {
+                order->signature_len = 0; /* malformed: treated as unsigned */
+            }
             if (cJSON_IsNumber(id) && cJSON_IsNumber(size) && order->url[0] && strlen(order->sha256) == 64) {
                 order->deployment_id = id->valueint;
                 order->size = size->valueint;
@@ -497,10 +509,33 @@ static const char *open_download(const char *url, int offset, esp_http_client_ha
     return NULL;
 }
 
+/* Checks the image's signature (see "Signed firmware" in the README). NULL when valid. */
+static const char *verify_signature(const uint8_t digest[32], const update_order_t *order)
+{
+    mbedtls_pk_context key;
+    mbedtls_pk_init(&key);
+    const char *err = NULL;
+    if (mbedtls_pk_parse_public_key(&key, (const unsigned char *)s_cfg.signing_key_pem,
+                                    strlen(s_cfg.signing_key_pem) + 1) != 0) {
+        err = "firmware signing key unreadable"; /* a mistake in this firmware's config */
+    } else if (mbedtls_pk_verify(&key, MBEDTLS_MD_SHA256, digest, 32, order->signature, order->signature_len) != 0) {
+        err = "invalid signature: not signed with this device's key";
+    }
+    mbedtls_pk_free(&key);
+    return err;
+}
+
 static void apply_update(const update_order_t *order)
 {
     const int dep = order->deployment_id;
     ESP_LOGI(TAG, "updating %s -> %s (%d bytes)", s_cfg.version, order->version, order->size);
+    if (s_cfg.signing_key_pem && !order->signature_len) {
+        /* No need to download it: it would be refused anyway. */
+        ESP_LOGE(TAG, "update failed: unsigned firmware refused");
+        report(dep, "failed", 0, "unsigned firmware refused: this device only accepts signed images");
+        close_kept(&s_report_conn);
+        return;
+    }
     if (!report(dep, "downloading", 0, NULL)) {
         ESP_LOGW(TAG, "update cancelled by server");
         close_kept(&s_report_conn);
@@ -633,6 +668,9 @@ static void apply_update(const update_order_t *order)
     }
     if (strcasecmp(digest_hex, order->sha256) != 0) {
         err = "sha256 mismatch";
+        goto done;
+    }
+    if (s_cfg.signing_key_pem && (err = verify_signature(digest, order)) != NULL) {
         goto done;
     }
 

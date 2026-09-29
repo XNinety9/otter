@@ -11,3 +11,6 @@ sdkconfig.*
 !sdkconfig.defaults
 .env
 _site/
+
+# Firmware signing keys: never commit a private key.
+*.key

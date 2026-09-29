@@ -59,6 +59,7 @@ Open http://localhost:8000.
 | `OTTER_CHECKIN_INTERVAL` | `30`           | Seconds between device check-ins                         |
 | `OTTER_FLEET_KEY`        | *(empty)*      | Shared secret devices enroll with (`X-Otter-Key`)        |
 | `OTTER_DEVICE_APPROVAL`  | *(off)*        | `1`: new devices wait for an approval in the dashboard   |
+| `OTTER_SIGNING_PUBLIC_KEY` | *(none)*     | Refuse firmware uploads not signed with this key         |
 | `OTTER_PUBLIC_URL`       | *(from request)* | Base URL put in download links, e.g. `http://10.0.0.5:8000` |
 
 ## Run with Docker
@@ -153,6 +154,29 @@ Devices enroll with the fleet key and then get a token of their own (the ESP-IDF
 in NVS): once a device uses it, the fleet key alone can't impersonate it. From a device's panel,
 **Revoke** blocks it and **Re-enroll** lets it get a new token. Set `OTTER_DEVICE_APPROVAL=1` to
 approve each new device before it can check in. Details: [Authentication](docs/protocol.md#authentication).
+
+### Signed firmware
+
+Sign images with a key that never leaves your machine (or your CI secrets), and build devices that
+only accept images signed with it: whoever controls the server or the network can't push theirs.
+
+```sh
+openssl ecparam -name prime256v1 -genkey -noout -out otter-signing.key   # keep it secret
+export OTTER_SIGNING_KEY=$PWD/otter-signing.key
+tools/release.sh otter-demo 1.2.0
+```
+
+With `OTTER_SIGNING_KEY` (a private key PEM, or its path), `tools/release.sh` builds the firmware
+with the matching public key (`OTTER_SIGNING_PUBKEY`, the ESP-IDF agent's `signing_key_pem`) and
+uploads each image with its signature; `tools/push.sh` signs too. Such devices refuse unsigned
+images before downloading them, and images signed with another key before switching partitions:
+the deployment fails with a clear error. The first signed-only firmware has to reach a device
+the usual way (USB, or an update it still accepts unsigned).
+
+To catch mistakes at upload, give the server the public key: `OTTER_SIGNING_PUBLIC_KEY` (PEM, or
+its path; `openssl pkey -in otter-signing.key -pubout`). It then refuses unsigned or wrongly
+signed images. In CI, store the private key in the `OTTER_SIGNING_KEY` secret. ECDSA P-256 is
+recommended; RSA keys work too. The Arduino library doesn't check signatures yet.
 
 ## Try it without hardware
 

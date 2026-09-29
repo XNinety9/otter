@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from . import commands, config
+from . import commands, config, signing
 from .api_device import publish_device
 from .api_rollouts import reconcile_channels
 from .auth import require_user
@@ -18,7 +18,7 @@ from .notify import INFO, Message, notifier
 from .models import OPEN_STATES, Command, Deployment, Device, Firmware, Tag, device_tags
 from .rollouts import cancel_open_deployments
 from .schemas import CommandIn, CommandOut, DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, FirmwarePatch, TagOut, normalize_tag
-from .storage import delete_firmware_file, store_firmware
+from .storage import delete_firmware_file, firmware_path, store_firmware
 
 router = APIRouter(prefix="/api", tags=["ui"], dependencies=[Depends(require_user)])
 
@@ -191,6 +191,7 @@ def upload_firmware(
     version: str = Form(min_length=1, max_length=32),
     notes: str | None = Form(default=None),
     channel: str | None = Form(default=None),
+    signature: str | None = Form(default=None, max_length=2048),
     session: Session = Depends(get_session),
 ):
     try:
@@ -198,12 +199,25 @@ def upload_firmware(
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
+    signature = (signature or "").strip() or None
+    try:
+        if signature:
+            signing.decode(signature)
+        if key := signing.server_key():
+            if not signature:
+                raise ValueError("unsigned firmware refused: this server requires signed images")
+            signing.verify(key, firmware_path(sha), signature)
+    except ValueError as exc:
+        _cleanup_orphan(session, sha)
+        raise HTTPException(422, str(exc)) from exc
+
     try:
         channel = normalize_tag(channel) if channel and channel.strip() else None
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     fw = Firmware(
-        app=app.strip(), hw=hw.strip(), version=version.strip(), size=size, sha256=sha, notes=notes, channel=channel
+        app=app.strip(), hw=hw.strip(), version=version.strip(), size=size, sha256=sha, notes=notes, channel=channel,
+        signature=signature,
     )
     session.add(fw)
     try:

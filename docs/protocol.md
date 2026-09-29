@@ -84,7 +84,8 @@ or, when an update is scheduled for this device:
     "version": "1.3.0",
     "url": "http://otter.local:8000/api/v1/firmwares/4/download",
     "size": 912384,
-    "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+    "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "signature": "MEUCIQ…"         // base64, when the image was signed (see Security)
   }
 }
 ```
@@ -230,7 +231,7 @@ What protects what, and what doesn't yet:
 |---|---|---|---|
 | Someone on the network reads the fleet key, device data, or dashboard passwords and cookies | **exposed** | protected | HTTPS: ESP-IDF done, Arduino to do ([#17](https://github.com/XNinety9/otter/issues/17)) |
 | Someone on the network (e.g. ARP spoofing) serves a malicious firmware | **exposed**: `sha256` comes through the same channel, it only detects corruption | protected, **if the device verifies the certificate** | HTTPS: ESP-IDF done, Arduino to do (#17) |
-| The server itself, or its storage, is compromised and serves a malicious firmware | exposed | exposed | signed firmware: [#18](https://github.com/XNinety9/otter/issues/18) |
+| The server itself, or its storage, is compromised and serves a malicious firmware | exposed | exposed | **signed firmware** (ESP-IDF agent): devices built with the public key refuse images not signed with the private key, which never reaches the server ([#18](https://github.com/XNinety9/otter/issues/18)) |
 | A device's key is extracted from its flash | the shared fleet key opens every device's API | same | per-device tokens (ESP-IDF agent): the fleet key alone can't act as an enrolled device, and a device can be revoked alone ([#15](https://github.com/XNinety9/otter/issues/15)); an extracted fleet key can still enroll new devices, unless `OTTER_DEVICE_APPROVAL` is on |
 
 Deployment options:
@@ -247,4 +248,10 @@ Deployment options:
 
 Devices must verify the server's certificate: TLS without verification still lets anyone on
 the network impersonate the server.
+
+**Signatures**: `signature` in an update order is the base64 of `openssl dgst -sha256 -sign`
+over the whole image (DER ECDSA, or RSA PKCS#1 v1.5). An agent configured with a public key
+refuses an order without one (report `failed`, `unsigned firmware refused…`) and checks the
+SHA-256 of what it wrote against it before switching partitions (`invalid signature…`); both
+are final, not retried.
 

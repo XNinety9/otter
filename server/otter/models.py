@@ -101,6 +101,11 @@ class Firmware(Base):
     notes: Mapped[str | None]
     uploaded_at: Mapped[datetime] = mapped_column(default=utcnow)
     channel: Mapped[str | None]  # release channel it is published on; None = unpublished
+    signature: Mapped[str | None]  # base64, made with the builder's private key (see signing.py)
+
+    @property
+    def signed(self) -> bool:
+        return self.signature is not None
 
 
 class Deployment(Base):

@@ -29,6 +29,10 @@ typedef struct {
     /* Optional. Server CA certificate (PEM) for https:// URLs. Without it the
      * ESP-IDF certificate bundle is used when enabled. */
     const char *cert_pem;
+    /* Optional. Public key (PEM) updates must be signed with: images without a valid
+     * signature are refused before the boot partition changes. See "Signed firmware" in the
+     * README. Without it, unsigned images are accepted. */
+    const char *signing_key_pem;
     /* By default a freshly updated firmware is marked valid as soon as it reaches the
      * server. Set this to call otter_mark_valid() yourself once the app is healthy. */
     bool manual_mark_valid;

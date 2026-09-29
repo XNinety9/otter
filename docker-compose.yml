@@ -11,6 +11,8 @@ services:
       OTTER_FLEET_KEY: ${OTTER_FLEET_KEY:-}
       # 1: new devices wait for an approval in the dashboard before they can check in.
       OTTER_DEVICE_APPROVAL: ${OTTER_DEVICE_APPROVAL:-}
+      # Refuse firmware not signed with this public key (PEM content): see "Signed firmware".
+      OTTER_SIGNING_PUBLIC_KEY: ${OTTER_SIGNING_PUBLIC_KEY:-}
       # Base URL devices use to download firmware, if the host header isn't reliable.
       OTTER_PUBLIC_URL: ${OTTER_PUBLIC_URL:-}
       # Notification targets (ntfy, Discord, webhooks): see "Notifications" in the README.
