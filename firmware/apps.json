@@ -1,0 +1,10 @@
+{
+  "otter-demo": {
+    "project": "firmware/examples/esp32-idf",
+    "environments": { "esp32": "esp32", "esp32c6": "esp32c6" }
+  },
+  "otter-demo-arduino": {
+    "project": "firmware/examples/arduino",
+    "environments": { "esp8266": "esp8266", "esp32": "esp32" }
+  }
+}

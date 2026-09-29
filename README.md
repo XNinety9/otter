@@ -252,6 +252,43 @@ Revisions are numbered sequentially (`0002`, `0003`…). SQLite can't alter most
 so migrations run in batch mode (tables are recreated). The test suite fails if the models and the
 migrations drift apart.
 
+## Release firmware from CI
+
+`tools/release.sh <app> <version>` makes clean builds of every environment of an app listed in
+[`firmware/apps.json`](firmware/apps.json), checks that each image embeds the version, and uploads
+the images to Otter when `OTTER_TOKEN` is set (on the channel `OTTER_CHANNEL`, if any). The
+version comes from `OTTER_VERSION`, so the example sources don't need editing.
+
+```sh
+OTTER_TOKEN=otk_… OTTER_SERVER=http://192.168.1.10:8000 WIFI_SSID=… WIFI_PASS=… \
+  tools/release.sh otter-demo 1.6.0
+```
+
+On GitHub, pushing a tag `<app>/v<version>` does the same:
+
+```sh
+git tag otter-demo/v1.6.0 && git push origin otter-demo/v1.6.0
+```
+
+Configure the repository (Settings → Secrets and variables → Actions):
+
+| Name | Kind | Purpose |
+|---|---|---|
+| `WIFI_SSID`, `WIFI_PASS` | secret | Baked into the firmware. Without them, CI only checks that the release builds. |
+| `OTTER_SERVER` | secret | Server URL baked into the firmware (and upload URL by default) |
+| `OTTER_PUSH_URL` | secret | Upload URL, if the runner reaches Otter differently than devices do |
+| `OTTER_TOKEN` | secret | API token for the upload (`python -m otter.cli create-token ci --user admin`) |
+| `OTTER_FLEET_KEY` | secret | Fleet key, if the server uses one |
+| `OTTER_CA_CERT` | secret | PEM certificate to trust, for an HTTPS server with a private CA |
+| `OTTER_CHANNEL` | variable | Publish uploads on this release channel |
+| `OTTER_RUNNER` | variable | Runner label, e.g. `self-hosted` |
+
+GitHub's runners can't reach a server on your LAN: expose Otter over HTTPS, or register a
+[self-hosted runner](https://docs.github.com/actions/hosting-your-own-runners) on your network and
+set `OTTER_RUNNER`. The images embed your Wi-Fi password: they are built and uploaded in one step
+and never stored as workflow artifacts or release assets, which anyone can download on a public
+repository. Without Wi-Fi settings, nothing is uploaded.
+
 ## Tests
 
 ```sh
