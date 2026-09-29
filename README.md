@@ -105,6 +105,38 @@ With ESP-IDF, a new firmware is marked valid once it reaches the server (or when
 reports the deployment as failed. The ESP8266 has no such safety net: only the image header
 and SHA-256 are checked before rebooting.
 
+## Monitoring
+
+`GET /metrics` serves Prometheus metrics:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `otter_devices` | gauge | `app`, `hw`, `version`, `online` |
+| `otter_device_last_seen_timestamp_seconds` | gauge | `mac`, `name`, `app` |
+| `otter_deployments` | gauge (by current status) | `status` |
+| `otter_firmwares` | gauge | |
+| `otter_checkins_total` | counter | `app` |
+| `otter_firmware_downloads_total` | counter | `app`, `version` |
+| `otter_firmware_download_bytes_total` | counter | |
+| `otter_deployment_outcomes_total` | counter | `status` (`success`, `failed`, `cancelled`) |
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: otter
+    static_configs:
+      - targets: ["otter.local:8000"]
+```
+
+Useful queries:
+
+```promql
+sum(otter_devices{online="true"})                           # devices online
+sum by (app, version) (otter_devices)                       # fleet by version
+increase(otter_deployment_outcomes_total[1d])               # deployment outcomes per day
+time() - otter_device_last_seen_timestamp_seconds > 300     # devices silent for 5 min
+```
+
 ## Database migrations
 
 The schema is managed with [Alembic](https://alembic.sqlalchemy.org/). The server upgrades its

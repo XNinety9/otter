@@ -13,3 +13,6 @@ FLEET_KEY = os.environ.get("OTTER_FLEET_KEY", "")
 PUBLIC_URL = os.environ.get("OTTER_PUBLIC_URL", "").rstrip("/")
 
 CHECKIN_INTERVAL_S = int(os.environ.get("OTTER_CHECKIN_INTERVAL", "30"))
+
+# A device is "online" if it checked in within this delay (same rule as the web UI).
+ONLINE_TIMEOUT_S = CHECKIN_INTERVAL_S * 2.5 + 5
