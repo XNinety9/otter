@@ -1,0 +1,77 @@
+name: Release firmware
+
+# Push a tag like `otter-demo/v1.6.0` (app from firmware/apps.json, then /v<version>) to build
+# every environment of that app with that version and upload the images to Otter.
+# See "Release firmware from CI" in the README for the secrets and the runner.
+on:
+  push:
+    tags: ["*/v*"]
+  workflow_dispatch:
+    inputs:
+      app:
+        description: App, as named in firmware/apps.json
+        required: true
+        default: otter-demo
+      version:
+        description: Version to build, e.g. 1.6.0
+        required: true
+      upload:
+        description: Upload the images to Otter
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-firmware-${{ github.ref }}
+
+jobs:
+  release:
+    # Otter is often only reachable on a LAN: a self-hosted runner there can upload to it.
+    runs-on: ${{ vars.OTTER_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: target
+        name: Read app and version
+        env:
+          REF: ${{ github.ref_name }}
+          INPUT_APP: ${{ inputs.app }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            app=${REF%%/v*} version=${REF#*/v}
+          else
+            app=$INPUT_APP version=$INPUT_VERSION
+          fi
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing $app $version"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.platformio
+          key: pio-release-${{ hashFiles('firmware/examples/*/platformio.ini', 'firmware/examples/*/dependencies.lock') }}
+          restore-keys: pio-release-
+      - run: pip install platformio
+
+      # Images embed the Wi-Fi settings: they are built and uploaded in this single step and
+      # never stored as artifacts, which anyone can download on a public repository.
+      - name: Build and upload
+        run: tools/release.sh "$APP" "$VERSION"
+        env:
+          APP: ${{ steps.target.outputs.app }}
+          VERSION: ${{ steps.target.outputs.version }}
+          WIFI_SSID: ${{ secrets.WIFI_SSID }}
+          WIFI_PASS: ${{ secrets.WIFI_PASS }}
+          OTTER_SERVER: ${{ secrets.OTTER_SERVER }}
+          OTTER_FLEET_KEY: ${{ secrets.OTTER_FLEET_KEY }}
+          OTTER_PUSH_URL: ${{ secrets.OTTER_PUSH_URL }}
+          OTTER_CA_CERT: ${{ secrets.OTTER_CA_CERT }}
+          OTTER_CHANNEL: ${{ vars.OTTER_CHANNEL }}
+          # Upload only for tags (or when asked), and only with real Wi-Fi settings.
+          OTTER_TOKEN: ${{ (github.event_name == 'push' || inputs.upload) && secrets.WIFI_SSID != '' && secrets.OTTER_TOKEN || '' }}
