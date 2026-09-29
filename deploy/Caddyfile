@@ -1,0 +1,11 @@
+# HTTPS in front of Otter (see docker-compose.https.yml).
+# OTTER_TLS=internal (default): certificates from Caddy's own CA, for LAN names like otter.lan.
+# OTTER_TLS=you@example.com: Let's Encrypt, for a public domain name pointing at this host.
+{$OTTER_DOMAIN} {
+	tls {$OTTER_TLS:internal}
+	encode gzip
+	reverse_proxy otter:8000 {
+		# Server-Sent Events and long-polling check-ins must not be buffered.
+		flush_interval -1
+	}
+}

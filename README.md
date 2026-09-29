@@ -72,6 +72,39 @@ docker run -d --name otter -p 8000:8000 -v otter-data:/data ghcr.io/xninety9/ott
 The container runs as UID 1000. With a bind mount instead of a volume, make sure that user can
 write to the directory. `GET /healthz` reports whether the server and its database are up.
 
+## HTTPS
+
+Over plain HTTP, anyone on your network can read dashboard passwords, session cookies and the
+fleet key, and could even serve a malicious firmware to a device (see
+[Security](docs/protocol.md#security)). Put Otter behind HTTPS with the Caddy overlay:
+
+```sh
+# On a LAN: certificates from Caddy's own CA
+OTTER_DOMAIN=otter.lan docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+
+# With a public domain pointing at this host: Let's Encrypt
+OTTER_DOMAIN=otter.example.com OTTER_TLS=you@example.com \
+  docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+```
+
+- Otter's own port 8000 is no longer published: everything goes through Caddy on 80/443 (HTTP
+  redirects to HTTPS). `OTTER_PUBLIC_URL` defaults to `https://$OTTER_DOMAIN`. With other ports
+  (`OTTER_HTTP_PORT`, `OTTER_HTTPS_PORT`), set `OTTER_PUBLIC_URL` to include the port.
+- `OTTER_DOMAIN` must be the name devices and browsers use, resolvable on your network (router DNS,
+  `/etc/hosts`…).
+- With Caddy's local CA, browsers and devices must trust its root certificate:
+
+  ```sh
+  docker compose -f docker-compose.yml -f docker-compose.https.yml \
+    cp caddy:/data/caddy/pki/authorities/local/root.crt otter-ca.pem
+  ```
+
+  Import `otter-ca.pem` in your browser or system trust store, and give it to the devices
+  (`cert_pem` of the ESP-IDF agent). The simulator takes it with `--ca otter-ca.pem`.
+- Without Docker, any TLS reverse proxy works. Uvicorn only trusts `X-Forwarded-*` headers from
+  `127.0.0.1` by default; if the proxy runs elsewhere, set `FORWARDED_ALLOW_IPS` to its address,
+  and never expose Otter's port directly when you do.
+
 ## Accounts and API tokens
 
 The dashboard and its API require an account. Create the first one on the server:
@@ -97,7 +130,7 @@ user's sessions), `list-users`, `delete-user`.
 
 Passwords are hashed with argon2; sessions and tokens are stored as SHA-256 hashes only. Logins are
 limited to 10 failures per address every 5 minutes. **Serve Otter over HTTPS as soon as it leaves
-your desk**: over plain HTTP, passwords and cookies can be sniffed on the network (see #17).
+your desk**: over plain HTTP, passwords and cookies can be sniffed on the network (see [HTTPS](#https)).
 
 ## Try it without hardware
 
