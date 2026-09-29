@@ -117,6 +117,26 @@ With ESP-IDF, a new firmware is marked valid once it reaches the server (or when
 reports the deployment as failed. The ESP8266 has no such safety net: only the image header
 and SHA-256 are checked before rebooting.
 
+## Notifications
+
+Otter can alert you when a deployment fails, a staged rollout halts, a device goes offline (and
+comes back), or a new device shows up. List the targets in `OTTER_NOTIFY_URLS`, separated by spaces
+or commas:
+
+| Target | Format |
+|---|---|
+| [ntfy](https://ntfy.sh) | `ntfy+https://ntfy.sh/my-topic` (`user:password@` in the URL for a protected server) |
+| Discord | the webhook URL, `https://discord.com/api/webhooks/…` |
+| Anything else | any URL: receives `{"event", "title", "message", "severity", "data"}` as JSON |
+
+`OTTER_NOTIFY_OFFLINE_MINUTES` (default 10, 0 disables it) sets when a silent device counts as
+offline. Devices already offline when the server starts don't trigger alerts. With
+`OTTER_PUBLIC_URL` set, notifications link back to the dashboard. Check the setup with:
+
+```sh
+curl -X POST http://localhost:8000/api/notifications/test
+```
+
 ## Monitoring
 
 `GET /metrics` serves Prometheus metrics:

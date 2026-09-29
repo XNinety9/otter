@@ -12,6 +12,7 @@ from . import config
 from .api_device import publish_device
 from .db import get_session
 from .events import broadcaster, wakeups
+from .notify import INFO, Message, notifier
 from .models import OPEN_STATES, Deployment, Device, Firmware, Tag, device_tags
 from .rollouts import cancel_open_deployments
 from .schemas import DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, TagOut
@@ -23,6 +24,24 @@ router = APIRouter(prefix="/api", tags=["ui"])
 @router.get("/config")
 def get_config():
     return {"checkin_interval_s": config.CHECKIN_INTERVAL_S}
+
+
+@router.get("/notifications")
+def notification_settings():
+    """Configured targets, described without their URLs (they often embed secrets)."""
+    return {
+        "targets": [t.describe() for t in notifier.targets()],
+        "offline_minutes": config.NOTIFY_OFFLINE_MINUTES,
+    }
+
+
+@router.post("/notifications/test")
+def test_notifications():
+    """Sends a test message to every target right away and reports how each one went."""
+    if not notifier.targets():
+        raise HTTPException(409, "no notification target configured (OTTER_NOTIFY_URLS)")
+    msg = Message("test", "Otter test notification", "Notifications from Otter reach you. 🦦", INFO)
+    return {"results": notifier.send(msg)}
 
 
 # --- Devices ---------------------------------------------------------------

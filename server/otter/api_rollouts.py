@@ -12,6 +12,7 @@ from .api_device import publish_device
 from .db import SessionLocal, get_session
 from .events import broadcaster, wakeups
 from .models import Device, Firmware, Rollout
+from .notify import notifier
 from .schemas import RolloutIn, RolloutOut
 
 router = APIRouter(prefix="/api", tags=["ui"])
@@ -55,6 +56,8 @@ def evaluate_now() -> rollouts.Changes:
         changes = rollouts.evaluate(session)
         session.commit()
         publish(session, changes)
+        for rollout in changes.halted:
+            notifier.emit("rollout_halted", rollout_id=rollout.id)
         return changes
 
 

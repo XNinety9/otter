@@ -11,6 +11,9 @@ services:
       OTTER_FLEET_KEY: ${OTTER_FLEET_KEY:-}
       # Base URL devices use to download firmware, if the host header isn't reliable.
       OTTER_PUBLIC_URL: ${OTTER_PUBLIC_URL:-}
+      # Notification targets (ntfy, Discord, webhooks): see "Notifications" in the README.
+      OTTER_NOTIFY_URLS: ${OTTER_NOTIFY_URLS:-}
+      OTTER_NOTIFY_OFFLINE_MINUTES: ${OTTER_NOTIFY_OFFLINE_MINUTES:-10}
     volumes:
       - otter-data:/data
     restart: unless-stopped
