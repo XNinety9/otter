@@ -59,6 +59,7 @@ Content-Type: application/json
   "min_free_heap": 251360,        // optional, lowest free heap since boot
   "reset_reason": "power_on",     // optional, why the device last restarted (see below)
   "boot_count": 17,               // optional, incremented at each boot
+  "config_version": "5dd2cdab1550ab80", // optional, remote configuration it has ("" = none)
   "wait_s": 30                    // optional, long polling (see below)
 }
 ```
@@ -70,7 +71,8 @@ Response:
   "checkin_interval_s": 30,
   "update": null,
   "commands": [],
-  "token": null                   // a new token when the request used the fleet key
+  "token": null,                  // a new token when the request used the fleet key
+  "config": null                  // the configuration, when config_version is outdated
 }
 ```
 
@@ -107,11 +109,28 @@ digits and `_`). The server flags a device that restarted (a new `boot_count`, o
 going down) because of a panic, watchdog, brownout, power glitch or CPU lockup: highlighted in the UI, counted in `otter_device_crashes_total`
 and notified as `device_crashed`.
 
+### Configuration
+
+Key/value settings edited in the dashboard, per tag and per device (the device's own values
+win over its tags', and tags apply in alphabetical order). An agent that supports them always
+sends `config_version` (`""` until it has one); when it differs from the current version, the
+answer carries the whole configuration:
+
+```json
+"config": { "version": "5dd2cdab1550ab80", "values": { "interval_s": 60, "unit": "C", "debug": false } }
+```
+
+The device applies it, keeps it (the ESP-IDF agent in NVS, so it applies from boot even
+offline) and checks in again right away with the new `config_version`, which the dashboard
+shows as "in sync". Values are strings, numbers or booleans; keys `[a-z][a-z0-9_]{0,31}`; at
+most 32 keys and 2 KB per device or tag. Agents that don't send `config_version` never get any.
+
 ### Long polling
 
-With `wait_s` > 0, if no update is scheduled, the server holds the request open for up to
-`wait_s` seconds (capped at 60) and answers as soon as a deployment targets the device, so
-updates start within a second or two instead of at the next check-in. Set the HTTP timeout
+With `wait_s` > 0, if nothing is waiting for the device, the server holds the request open for
+up to `wait_s` seconds (capped at 60) and answers as soon as a deployment, a command or a new
+configuration concerns it, so they reach it within a second or two instead of at the next
+check-in. Set the HTTP timeout
 to `wait_s` plus a margin.
 
 Agents should wait `checkin_interval_s` **minus the time the request took** before the next

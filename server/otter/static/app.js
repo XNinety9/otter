@@ -474,10 +474,86 @@ function openPanel(id) {
   $(".history tbody", panel).innerHTML = "";
   panelCommands = [];
   renderCommands();
+  panelConfig = null;
   renderPanel();
   panel.showModal();
   loadCommands(id);
+  loadConfig(id, "device");
 }
+
+// --- Remote configuration -------------------------------------------------------
+
+let panelConfig = null; // GET /api/devices/{id}/config
+
+async function loadConfig(id, scope = null) {
+  try {
+    const config = await api("GET", `/api/devices/${id}/config`);
+    if (id !== panelDeviceId) return;
+    panelConfig = config;
+    renderConfig();
+    if (scope) await loadConfigScope(scope);
+  } catch {}
+}
+
+function renderConfig() {
+  const d = state.devices.get(panelDeviceId);
+  const c = panelConfig;
+  if (!d || !c) return;
+  const stateEl = $(".config-state", panel);
+  const keys = Object.keys(c.values);
+  let text, cls = "";
+  if (d.config_version == null) {
+    [text, cls] = ["This firmware doesn't support remote configuration.", "unsupported"];
+  } else if (d.config_version === c.version) {
+    text = keys.length ? "✓ In sync: the device has these values." : "No configuration.";
+  } else {
+    [text, cls] = ["Waiting for the device to fetch these values…", "pending"];
+  }
+  stateEl.textContent = text;
+  stateEl.className = `config-state ${cls}`;
+  $(".config-table tbody", panel).innerHTML = keys.map((k) => `
+    <tr><td class="key">${esc(k)}</td><td>${esc(JSON.stringify(c.values[k]))}</td>
+      <td class="src">${c.sources[k] === "device" ? "this device" : esc(c.sources[k])}</td></tr>`).join("");
+
+  const select = $(".config-edit select", panel);
+  const scopes = ["device", ...d.tags.map((t) => `#${t}`)];
+  if (select.dataset.scopes !== scopes.join(",")) {
+    const previous = select.value;
+    select.innerHTML = scopes.map((s) => `<option value="${esc(s)}">${s === "device" ? "this device" : `tag ${esc(s)} (all its devices)`}</option>`).join("");
+    select.value = scopes.includes(previous) ? previous : "device";
+    select.dataset.scopes = scopes.join(",");
+  }
+}
+
+function configPath(scope) {
+  return scope === "device" ? `/api/devices/${panelDeviceId}/config` : `/api/tags/${encodeURIComponent(scope.slice(1))}/config`;
+}
+
+async function loadConfigScope(scope) {
+  const values = scope === "device" ? panelConfig.own : (await api("GET", configPath(scope))).values;
+  $(".config-edit textarea", panel).value = Object.keys(values).length ? JSON.stringify(values, null, 2) : "{}";
+}
+
+$(".config-edit select", panel).addEventListener("change", (e) => loadConfigScope(e.target.value).catch(() => {}));
+
+$(".config-edit", panel).addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const scope = e.target.scope.value;
+  let values;
+  try {
+    values = JSON.parse(e.target.values.value || "{}");
+  } catch {
+    return toast("Values must be a JSON object, e.g. {\"interval\": 60}", "err");
+  }
+  if (typeof values !== "object" || Array.isArray(values) || values === null) return toast("Values must be a JSON object", "err");
+  try {
+    await api("PUT", configPath(scope), { values });
+    toast(`Configuration of ${scope === "device" ? label(state.devices.get(panelDeviceId)) : scope} saved`, "ok");
+    await loadConfig(panelDeviceId);
+  } catch (err) {
+    toast(err.message, "err");
+  }
+});
 
 // --- Remote commands ----------------------------------------------------------
 
@@ -1006,7 +1082,10 @@ function connect() {
     state.devices.set(d.id, d);
     renderDevices();
     renderToolbar();
-    if (d.id === panelDeviceId) renderPanel();
+    if (d.id === panelDeviceId) {
+      renderPanel();
+      renderConfig(); // the device may just have fetched its configuration
+    }
   });
   es.addEventListener("device_deleted", (e) => {
     const { id } = JSON.parse(e.data);
@@ -1025,6 +1104,9 @@ function connect() {
   es.addEventListener("resync", () => resync());
   es.addEventListener("rollouts", () => loadRollouts());
   es.addEventListener("command", (e) => commandArrived(JSON.parse(e.data)));
+  es.addEventListener("config", (e) => {
+    if (JSON.parse(e.data).device_ids.includes(panelDeviceId)) loadConfig(panelDeviceId);
+  });
 }
 
 // Keep "last seen" and online dots fresh between events.

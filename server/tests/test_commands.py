@@ -97,3 +97,24 @@ def test_deleting_a_device_deletes_its_commands(client, checkin):
     client.delete(f"/api/devices/{ids(client)[A]}")
     with SessionLocal() as session:
         assert session.query(Command).count() == 0
+
+
+def test_a_superseded_long_poll_delivers_nothing(client, checkin):
+    """A device that rebooted during a long poll leaves it behind: the command must not go there."""
+    checkin(mac=A)
+    result = {}
+
+    def stale_poll():
+        res = client.post(
+            "/api/v1/checkin", json={"mac": A, "hw": "esp32", "app": "weather", "fw_version": "1.0.0", "wait_s": 20}
+        )
+        result["commands"] = res.json()["commands"]
+
+    thread = threading.Thread(target=stale_poll)
+    thread.start()
+    time.sleep(0.5)
+    checkin(mac=A, uptime_s=3)  # the device is back, on a new connection
+    send(client, [A], "identify")
+    thread.join(10)
+    assert result["commands"] == []
+    assert [c["name"] for c in checkin(mac=A)["commands"]] == ["identify"]

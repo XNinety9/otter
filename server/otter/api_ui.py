@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from . import commands, config, signing
+from . import commands, config, devconfig, signing
 from .api_device import publish_device
 from .api_rollouts import reconcile_channels
 from .auth import require_user
@@ -17,7 +17,7 @@ from .events import broadcaster, wakeups
 from .notify import INFO, Message, notifier
 from .models import OPEN_STATES, Command, Deployment, Device, Firmware, Tag, device_tags
 from .rollouts import cancel_open_deployments
-from .schemas import CommandIn, CommandOut, DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, FirmwarePatch, TagOut, normalize_tag
+from .schemas import CommandIn, CommandOut, ConfigIn, ConfigOut, DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, FirmwarePatch, TagName, TagOut, normalize_tag
 from .storage import delete_firmware_file, firmware_path, store_firmware
 
 router = APIRouter(prefix="/api", tags=["ui"], dependencies=[Depends(require_user)])
@@ -64,6 +64,56 @@ def device_deployments(device_id: int, limit: int = 100, session: Session = Depe
     return session.scalars(
         select(Deployment).where(Deployment.device_id == device_id).order_by(Deployment.id.desc()).limit(limit)
     ).all()
+
+
+# --- Remote configuration (#23, see devconfig.py) --------------------------
+
+
+def device_config(session: Session, device: Device) -> ConfigOut:
+    values, sources = devconfig.effective(session, device)
+    return ConfigOut(
+        values=values,
+        sources=sources,
+        own=devconfig.scope_values(session, device=device),
+        version=devconfig.version(values),
+        reported_version=device.config_version,
+    )
+
+
+def push_config(devices: list[Device]) -> None:
+    """Long-polling devices get their new configuration right away."""
+    for device in devices:
+        wakeups.notify(device.mac)
+    broadcaster.publish("config", {"device_ids": [d.id for d in devices]})
+
+
+@router.get("/devices/{device_id}/config", response_model=ConfigOut)
+def get_device_config(device_id: int, session: Session = Depends(get_session)):
+    return device_config(session, session.get(Device, device_id) or _404("device"))
+
+
+@router.put("/devices/{device_id}/config", response_model=ConfigOut)
+def put_device_config(device_id: int, body: ConfigIn, session: Session = Depends(get_session)):
+    """Replaces the device's own values (its tags' values still apply underneath)."""
+    device = session.get(Device, device_id) or _404("device")
+    devconfig.replace(session, body.values, device=device)
+    session.commit()
+    push_config([device])
+    return device_config(session, device)
+
+
+@router.get("/tags/{name}/config", response_model=ConfigOut)
+def get_tag_config(name: TagName, session: Session = Depends(get_session)):
+    return ConfigOut(values=devconfig.scope_values(session, tag=name))
+
+
+@router.put("/tags/{name}/config", response_model=ConfigOut)
+def put_tag_config(name: TagName, body: ConfigIn, session: Session = Depends(get_session)):
+    """Replaces the tag's values: every device with the tag gets them, unless it overrides them."""
+    devconfig.replace(session, body.values, tag=name)
+    session.commit()
+    push_config(devconfig.devices_of_tag(session, name))
+    return ConfigOut(values=devconfig.scope_values(session, tag=name))
 
 
 # --- Device credentials (#15, see device_auth.py) ---------------------------
@@ -136,6 +186,8 @@ def patch_device(device_id: int, body: DevicePatch, session: Session = Depends(g
         device.channel = body.channel
     session.commit()
     publish_device(device)
+    if "tags" in body.model_fields_set:
+        push_config([device])  # its tags' configuration applies to it now
     if "channel" in body.model_fields_set:
         reconcile_channels()  # a newer firmware may be waiting on that channel
         session.refresh(device)

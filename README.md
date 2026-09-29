@@ -254,6 +254,27 @@ otter.onCommand("set_level", [](const String &args, String &message) {
 example drives the ESP32-C6-DevKitC-1's RGB LED). The Arduino library only receives commands at
 its check-ins, every 30 s by default.
 
+## Remote configuration
+
+Settings that shouldn't need a new firmware (intervals, thresholds, feature flags): edit them in a
+device's panel, for the device itself or for one of its tags, as a JSON object of strings, numbers
+and booleans. The device's own values win over its tags'. Long-polling devices get a change
+within a second, without rebooting, and the panel shows when a device is in sync.
+
+```c
+// ESP-IDF: read values anywhere (thread-safe), or react to changes
+int interval_s = otter_config_get_int("interval_s", 60);
+otter_on_config(on_config, NULL);  // on_config(const char *json, void *ctx), at start and on changes
+```
+
+```cpp
+// Arduino
+otter.onConfig([](const String &json) { /* parse it with ArduinoJson */ });
+```
+
+The ESP-IDF agent keeps the configuration in NVS, so it applies from boot even without network;
+the Arduino library keeps it in RAM and gets it again at its first check-in after boot.
+
 ## Notifications
 
 Otter can alert you when a deployment fails, a staged rollout halts, a device goes offline (and

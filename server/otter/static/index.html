@@ -118,6 +118,16 @@
       <select aria-label="Update channel"></select>
       <span class="muted">Gets the newest firmware published on this channel (and on <em>stable</em>) automatically.</span>
     </div>
+    <h3>Configuration</h3>
+    <div class="config">
+      <p class="config-state"></p>
+      <table class="config-table"><tbody></tbody></table>
+      <form class="config-edit">
+        <label>Values of <select name="scope" aria-label="Configuration scope"></select></label>
+        <textarea name="values" rows="4" spellcheck="false" aria-label="Values (JSON object)"></textarea>
+        <div class="config-actions"><span class="muted">A JSON object of strings, numbers and booleans.</span><button type="submit">Save</button></div>
+      </form>
+    </div>
     <h3>Access</h3>
     <div class="access">
       <span class="access-state"></span>

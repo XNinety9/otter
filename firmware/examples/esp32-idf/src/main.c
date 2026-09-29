@@ -102,6 +102,13 @@ static esp_err_t identify(const char *args, char *result, size_t result_size, vo
     return ESP_OK;
 }
 
+/* Remote configuration: try {"alive_interval_s": 10, "greeting": "hello"} on this device or
+ * one of its tags in the dashboard. */
+static void on_config(const char *config_json, void *ctx)
+{
+    ESP_LOGI(TAG, "configuration: %s", config_json);
+}
+
 /* "echo": answers with its arguments, to try custom commands from the dashboard. */
 static esp_err_t echo(const char *args, char *result, size_t result_size, void *ctx)
 {
@@ -134,10 +141,14 @@ void app_main(void)
     ESP_ERROR_CHECK(otter_start(&otter));
     otter_register_command("identify", identify, NULL);
     otter_register_command("echo", echo, NULL);
+    otter_on_config(on_config, NULL);
 
-    // The device's actual work goes here.
+    // The device's actual work goes here, tuned by its remote configuration.
     while (true) {
-        ESP_LOGI(TAG, "alive, free heap %lu", (unsigned long)esp_get_free_heap_size());
-        vTaskDelay(pdMS_TO_TICKS(60000));
+        char greeting[32];
+        otter_config_get_str("greeting", greeting, sizeof(greeting), "alive");
+        ESP_LOGI(TAG, "%s, free heap %lu", greeting, (unsigned long)esp_get_free_heap_size());
+        int interval_s = otter_config_get_int("alive_interval_s", 60);
+        vTaskDelay(pdMS_TO_TICKS((interval_s > 0 ? interval_s : 60) * 1000));
     }
 }

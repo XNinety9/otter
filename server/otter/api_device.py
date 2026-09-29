@@ -2,7 +2,7 @@
 
 import asyncio
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import commands, config
+from . import commands, config, devconfig
 from .auth import token_hash
 from .db import SessionLocal, get_session, utcnow
 from .device_auth import DeviceAuth, authenticate, check_access, new_token
@@ -18,7 +18,7 @@ from .events import broadcaster, wakeups
 from .metrics import CHECKINS, CRASHES, DOWNLOAD_BYTES, DOWNLOADS
 from .notify import notifier
 from .models import CRASH_RESETS, Command, Deployment, Device, Firmware
-from .schemas import CheckinIn, CheckinOut, CommandOrder, CommandResultIn, DeviceOut, ProgressIn, UpdateOrder
+from .schemas import CheckinIn, CheckinOut, CommandResultIn, ConfigOrder, DeviceOut, ProgressIn, UpdateOrder
 from .storage import firmware_path
 
 
@@ -44,23 +44,37 @@ def publish_device(device: Device) -> None:
 
 @router.post("/checkin", response_model=CheckinOut)
 async def checkin(body: CheckinIn, request: Request, auth: DeviceAuth = Depends(authenticate)):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + min(body.wait_s, MAX_WAIT_S)
     with wakeups.watch(body.mac) as scheduled:
-        order, orders, token = await run_in_threadpool(record_checkin, body, request, auth)
-        if order is None and not orders and body.wait_s:
+        answer, seen = await run_in_threadpool(record_checkin, body, request, auth)
+        while not answer.has_news() and (remaining := deadline - loop.time()) > 0:
             try:
-                await asyncio.wait_for(scheduled.wait(), min(body.wait_s, MAX_WAIT_S))
-                # Something was scheduled while we waited: re-evaluate to build the orders.
-                order, orders, token = await run_in_threadpool(record_checkin, body, request, auth)
+                await asyncio.wait_for(scheduled.wait(), remaining)
             except TimeoutError:
-                pass
-    return CheckinOut(checkin_interval_s=config.CHECKIN_INTERVAL_S, update=order, commands=orders, token=token)
+                break
+            # Something may concern the device: re-evaluate. A wake-up can also bring nothing
+            # for it (e.g. a tag without configuration): then keep waiting, or the device would
+            # sleep a whole interval and miss what comes next.
+            scheduled.clear()
+            answer, seen = await run_in_threadpool(record_checkin, body, request, auth, seen)
+            if seen is None:
+                # The device checked in again since (it rebooted, or gave up on this request):
+                # nobody listens here, so deliver nothing and don't overwrite its newer state.
+                break
+    return answer
 
 
 def record_checkin(
-    body: CheckinIn, request: Request, auth: DeviceAuth
-) -> tuple[UpdateOrder | None, list[CommandOrder], str | None]:
+    body: CheckinIn, request: Request, auth: DeviceAuth, seen: datetime | None = None
+) -> tuple[CheckinOut, datetime | None]:
+    """Records a check-in and builds the answer, with the last_seen it wrote. On a long poll's
+    re-evaluation, seen is what the previous evaluation wrote: if it changed, a newer check-in
+    superseded this one and (empty answer, None) comes back."""
     with SessionLocal() as session:
         device = session.scalar(select(Device).where(Device.mac == body.mac))
+        if seen is not None and (device is None or device.last_seen != seen):
+            return CheckinOut(checkin_interval_s=config.CHECKIN_INTERVAL_S), None
         is_new = device is None
         if is_new:
             if auth.device_id is not None:
@@ -97,6 +111,13 @@ def record_checkin(
         if auth.fleet and device.token_used_at is None:
             token = new_token()
             device.token_hash = token_hash(token)
+
+        device.config_version = body.config_version
+        config_order = None
+        if body.config_version is not None:
+            values, _ = devconfig.effective(session, device)
+            if body.config_version != (current := devconfig.version(values)):
+                config_order = ConfigOrder(version=current, values=values)
 
         order = None
         failed = None
@@ -136,7 +157,14 @@ def record_checkin(
         if crashed:
             CRASHES.labels(body.app, body.reset_reason).inc()
             notifier.emit("device_crashed", device_id=device.id, reason=body.reset_reason)
-        return order, commands.as_orders(sent), token
+        answer = CheckinOut(
+            checkin_interval_s=config.CHECKIN_INTERVAL_S,
+            update=order,
+            commands=commands.as_orders(sent),
+            token=token,
+            config=config_order,
+        )
+        return answer, device.last_seen
 
 
 def restarted(device: Device, body: CheckinIn) -> bool:

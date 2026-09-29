@@ -40,6 +40,13 @@ class OtterAgent {
   // and "identify", which blinks LED_BUILTIN when the board defines it.
   bool onCommand(const char *name, CommandHandler handler);
 
+  // Remote configuration edited in Otter (a JSON object of settings, per tag and per device).
+  // The handler runs at the first check-in after boot, then each time the configuration
+  // changes. It is kept in RAM only: parse what you need, e.g. with ArduinoJson.
+  using ConfigHandler = std::function<void(const String &configJson)>;
+  void onConfig(ConfigHandler handler) { _configHandler = handler; }
+  const String &config() const { return _configJson; }
+
  private:
   struct Order {
     int deploymentId = 0;
@@ -66,5 +73,7 @@ class OtterAgent {
   };
   Command _commands[kMaxCommands];
   bool _rebootRequested = false;
+  String _configJson = "{}", _configVersion;
+  ConfigHandler _configHandler;
   bool _checkinAgain = false;
 };

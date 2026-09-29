@@ -26,6 +26,8 @@ void setup() {
   config.version = APP_VERSION;
   config.fleetKey = OTTER_FLEET_KEY;
   otter.begin(config);
+  // Remote configuration from the dashboard, e.g. {"greeting": "hello"}.
+  otter.onConfig([](const String &config) { Serial.printf("configuration: %s\n", config.c_str()); });
   // A remote command to try from the dashboard: answers with its arguments.
   otter.onCommand("echo", [](const String &args, String &message) {
     message = args;

@@ -49,6 +49,9 @@ class CheckinIn(BaseModel):
     min_free_heap: int | None = Field(default=None, ge=0)
     reset_reason: str | None = Field(default=None, max_length=32, pattern=r"^[a-z0-9_]+$")
     boot_count: int | None = Field(default=None, ge=0)
+    # Version of the remote configuration the device has ("" = none). Agents that support
+    # remote configuration always send it; the others never get any.
+    config_version: str | None = Field(default=None, max_length=64)
     # Long polling: if no update is ready, the server may hold the request up to this long.
     wait_s: int = Field(default=0, ge=0)
 
@@ -76,12 +79,49 @@ class CommandOrder(BaseModel):
     args: dict | None = None
 
 
+ConfigKey = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
+ConfigScalar = str | bool | int | float
+
+
+class ConfigOrder(BaseModel):
+    version: str
+    values: dict[str, ConfigScalar]
+
+
 class CheckinOut(BaseModel):
     checkin_interval_s: int
     update: UpdateOrder | None = None
     commands: list[CommandOrder] = []
     # Issued to a device checking in with the fleet key: use it from now on (Authorization: Bearer).
     token: str | None = None
+    # The whole remote configuration, when the device's config_version is outdated.
+    config: ConfigOrder | None = None
+
+    def has_news(self) -> bool:
+        """Whether the device must hear back now (else a long poll may wait)."""
+        return bool(self.update or self.commands or self.config)
+
+
+class ConfigIn(BaseModel):
+    values: dict[ConfigKey, ConfigScalar] = Field(max_length=32)
+
+    @field_validator("values")
+    @classmethod
+    def small_values(cls, v: dict) -> dict:
+        for key, value in v.items():
+            if isinstance(value, str) and len(value) > 256:
+                raise ValueError(f"{key}: at most 256 characters")
+        if len(json.dumps(v)) > 2048:
+            raise ValueError("at most 2 KB of configuration per device or tag")
+        return v
+
+
+class ConfigOut(BaseModel):
+    values: dict[str, ConfigScalar]  # effective, for a device; the tag's own, for a tag
+    sources: dict[str, str] = {}  # key -> "#tag" or "device"
+    own: dict[str, ConfigScalar] = {}  # the device's own values
+    version: str = ""
+    reported_version: str | None = None  # what the device says it has (None: no support)
 
 
 CommandName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
@@ -179,6 +219,7 @@ class DeviceOut(BaseModel):
     reset_reason: str | None = None
     boot_count: int | None = None
     auth: str = "fleet_key"
+    config_version: str | None = None
     first_seen: UtcDatetime
     last_seen: UtcDatetime
     last_deployment: DeploymentOut | None
