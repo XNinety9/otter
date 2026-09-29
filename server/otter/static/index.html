@@ -22,6 +22,8 @@
       <div class="section-head">
         <h2>Devices</h2>
         <div class="toolbar">
+          <button class="ghost selection-cmd" data-cmd="identify" hidden title="Make the selected devices show themselves (LED)">Identify</button>
+          <button class="ghost selection-cmd" data-cmd="reboot" hidden>Reboot</button>
           <select id="deploy-fw" aria-label="Firmware to deploy"></select>
           <button id="deploy-btn" class="primary" disabled>Deploy</button>
         </div>
@@ -115,6 +117,19 @@
     <div class="channel-follow">
       <select aria-label="Update channel"></select>
       <span class="muted">Gets the newest firmware published on this channel (and on <em>stable</em>) automatically.</span>
+    </div>
+    <h3>Commands</h3>
+    <div class="commands">
+      <div class="command-bar">
+        <button class="ghost cmd" data-cmd="reboot">Reboot</button>
+        <button class="ghost cmd" data-cmd="identify" title="Blink its LED, or whatever the firmware does to show itself">Identify</button>
+        <form class="cmd-custom">
+          <input name="name" placeholder="other command" maxlength="32" pattern="[a-z][a-z0-9_]{0,31}" autocomplete="off" aria-label="Command name" required>
+          <input name="args" placeholder='args, e.g. {"level": 2}' autocomplete="off" aria-label="Command arguments (JSON object)">
+          <button class="ghost" type="submit">Send</button>
+        </form>
+      </div>
+      <ul class="command-log"></ul>
     </div>
     <h3>Deployment history</h3>
     <div class="table-wrap">

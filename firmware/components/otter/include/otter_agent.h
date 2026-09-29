@@ -42,6 +42,16 @@ esp_err_t otter_start(const otter_config_t *config);
 /* Confirms the running firmware so the bootloader won't roll it back. */
 esp_err_t otter_mark_valid(void);
 
+/* Handler of a remote command sent from Otter. args is the command's arguments as a JSON
+ * object ("{}" without any). Write an optional short message for the dashboard in result
+ * and return ESP_OK on success. Runs in the agent's task: keep it short. */
+typedef esp_err_t (*otter_command_handler_t)(const char *args, char *result, size_t result_size, void *ctx);
+
+/* Registers, or replaces, the handler of a remote command (up to 8), before or after
+ * otter_start(). Built in: "reboot", and "identify", which only logs until the app
+ * registers its own (blink an LED, beep…). Names: lowercase letters, digits and _. */
+esp_err_t otter_register_command(const char *name, otter_command_handler_t handler, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif

@@ -27,7 +27,7 @@
 #include "esp_crt_bundle.h"
 #endif
 
-#define RESPONSE_MAX 1024
+#define RESPONSE_MAX 4096 /* room for a few commands with arguments */
 #define CHUNK_SIZE 4096
 #define RETRY_DELAY_S 10
 #define HTTP_TIMEOUT_MS 15000
@@ -51,6 +51,16 @@ static otter_config_t s_cfg;
 static uint32_t s_interval_s = 30;
 static bool s_pending_verify;
 static int32_t s_boot_count = -1; /* -1: unknown (no NVS) */
+
+#define MAX_COMMANDS 8
+typedef struct {
+    char name[33];
+    otter_command_handler_t handler;
+    void *ctx;
+} command_entry_t;
+static command_entry_t s_commands[MAX_COMMANDS];
+static bool s_reboot_requested;
+static bool s_checkin_again; /* commands came: the next ones may be right behind */
 
 /* --- HTTP helpers --------------------------------------------------------- */
 
@@ -259,6 +269,107 @@ static char *build_checkin_body(void)
     return body;
 }
 
+/* --- Remote commands ------------------------------------------------------ */
+
+esp_err_t otter_register_command(const char *name, otter_command_handler_t handler, void *ctx)
+{
+    if (!name || !handler || strlen(name) >= sizeof(s_commands[0].name)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    command_entry_t *free_slot = NULL;
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        if (strcmp(s_commands[i].name, name) == 0) {
+            free_slot = &s_commands[i];
+            break;
+        }
+        if (!free_slot && !s_commands[i].name[0]) {
+            free_slot = &s_commands[i];
+        }
+    }
+    if (!free_slot) {
+        return ESP_ERR_NO_MEM;
+    }
+    strcpy(free_slot->name, name);
+    free_slot->handler = handler;
+    free_slot->ctx = ctx;
+    return ESP_OK;
+}
+
+static esp_err_t builtin_reboot(const char *args, char *result, size_t size, void *ctx)
+{
+    s_reboot_requested = true; /* once every command is acknowledged */
+    snprintf(result, size, "rebooting");
+    return ESP_OK;
+}
+
+static esp_err_t builtin_identify(const char *args, char *result, size_t size, void *ctx)
+{
+    ESP_LOGW(TAG, "*** identify requested from Otter ***");
+    snprintf(result, size, "logged only: this firmware has no identify handler");
+    return ESP_OK;
+}
+
+static void run_command(int id, const char *name, const char *args)
+{
+    char result[128] = "";
+    esp_err_t err = ESP_ERR_NOT_SUPPORTED;
+    otter_command_handler_t handler = NULL;
+    void *ctx = NULL;
+    for (int i = 0; i < MAX_COMMANDS; i++) {
+        if (strcmp(s_commands[i].name, name) == 0) {
+            handler = s_commands[i].handler;
+            ctx = s_commands[i].ctx;
+        }
+    }
+    if (!handler && strcmp(name, "reboot") == 0) {
+        handler = builtin_reboot;
+    } else if (!handler && strcmp(name, "identify") == 0) {
+        handler = builtin_identify;
+    }
+    if (handler) {
+        ESP_LOGI(TAG, "command %s %s", name, args);
+        err = handler(args, result, sizeof(result), ctx);
+    } else {
+        snprintf(result, sizeof(result), "unknown command");
+    }
+    if (err != ESP_OK && !result[0]) {
+        snprintf(result, sizeof(result), "%s", esp_err_to_name(err));
+    }
+
+    cJSON *ack = cJSON_CreateObject();
+    cJSON_AddBoolToObject(ack, "ok", err == ESP_OK);
+    if (result[0]) {
+        cJSON_AddStringToObject(ack, "message", result);
+    }
+    char *body = cJSON_PrintUnformatted(ack);
+    cJSON_Delete(ack);
+    char path[64];
+    snprintf(path, sizeof(path), "/api/v1/commands/%d/result", id);
+    if (body && post_json(path, body, NULL, 0, HTTP_TIMEOUT_MS, NULL) != 200) {
+        ESP_LOGW(TAG, "command %d: result not delivered", id);
+    }
+    free(body);
+}
+
+static void run_commands(cJSON *commands)
+{
+    cJSON *command;
+    cJSON_ArrayForEach(command, commands) {
+        cJSON *id = cJSON_GetObjectItem(command, "id");
+        cJSON *name = cJSON_GetObjectItem(command, "name");
+        if (!cJSON_IsNumber(id) || !cJSON_IsString(name)) {
+            continue;
+        }
+        cJSON *args = cJSON_GetObjectItem(command, "args");
+        char *args_json = cJSON_IsObject(args) ? cJSON_PrintUnformatted(args) : NULL;
+        run_command(id->valueint, name->valuestring, args_json ? args_json : "{}");
+        free(args_json);
+        s_checkin_again = true;
+    }
+}
+
+/* --- Check-in (continued) ------------------------------------------------- */
+
 /* Returns true when the server answered. Fills order when an update is scheduled. */
 static bool checkin(update_order_t *order)
 {
@@ -281,6 +392,10 @@ static bool checkin(update_order_t *order)
         cJSON *interval = cJSON_GetObjectItem(root, "checkin_interval_s");
         if (cJSON_IsNumber(interval) && interval->valueint > 0) {
             s_interval_s = interval->valueint;
+        }
+        cJSON *commands = cJSON_GetObjectItem(root, "commands");
+        if (cJSON_IsArray(commands)) {
+            run_commands(commands);
         }
         cJSON *update = cJSON_GetObjectItem(root, "update");
         if (cJSON_IsObject(update)) {
@@ -536,12 +651,21 @@ static void otter_task(void *arg)
             }
         }
 
+        if (s_reboot_requested) {
+            ESP_LOGW(TAG, "rebooting, as asked from Otter");
+            vTaskDelay(pdMS_TO_TICKS(500));
+            esp_restart();
+        }
         if (order.deployment_id) {
             apply_update(&order);
             continue; /* only reached on failure/cancel: check in again right away */
         }
         if (!reached) {
             vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_S * 1000));
+            continue;
+        }
+        if (s_checkin_again) {
+            s_checkin_again = false;
             continue;
         }
         /* A long-polling server already made us wait: poll again right away. A server

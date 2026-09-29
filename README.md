@@ -191,6 +191,37 @@ With ESP-IDF, a new firmware is marked valid once it reaches the server (or when
 reports the deployment as failed. The ESP8266 has no such safety net: only the image header
 and SHA-256 are checked before rebooting.
 
+## Remote commands
+
+From a device's panel, or for the selected devices in the list: **Reboot**, **Identify** (blink
+its LED to find it on a shelf) or any command the firmware knows, with JSON arguments. They
+reach a long-polling device within a second or two, and the panel shows each device's answer.
+
+Register your own in the firmware:
+
+```c
+// ESP-IDF
+static esp_err_t set_level(const char *args, char *result, size_t size, void *ctx)
+{
+    // args: {"level": 2}, parse it with cJSON
+    snprintf(result, size, "level set");
+    return ESP_OK;
+}
+otter_register_command("set_level", set_level, NULL);
+```
+
+```cpp
+// Arduino
+otter.onCommand("set_level", [](const String &args, String &message) {
+  message = "level set";
+  return true;
+});
+```
+
+`reboot` and `identify` are built in; override `identify` to blink your own LED (the ESP-IDF
+example drives the ESP32-C6-DevKitC-1's RGB LED). The Arduino library only receives commands at
+its check-ins, every 30 s by default.
+
 ## Notifications
 
 Otter can alert you when a deployment fails, a staged rollout halts, a device goes offline (and
