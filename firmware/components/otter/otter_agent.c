@@ -18,6 +18,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/pk.h"
@@ -67,7 +68,15 @@ typedef struct {
 } command_entry_t;
 static command_entry_t s_commands[MAX_COMMANDS];
 static bool s_reboot_requested;
-static bool s_checkin_again; /* commands came: the next ones may be right behind */
+
+/* Remote configuration: the values, their version (as the server named it), the app's handler. */
+static SemaphoreHandle_t s_config_lock;
+static cJSON *s_config;
+static char s_config_version[65];
+static otter_config_handler_t s_config_handler;
+static void *s_config_ctx;
+static bool s_started;
+static bool s_checkin_again; /* commands or a configuration came: check in again right away */
 
 /* --- HTTP helpers --------------------------------------------------------- */
 
@@ -286,6 +295,7 @@ static char *build_checkin_body(void)
     if (s_boot_count >= 0) {
         cJSON_AddNumberToObject(obj, "boot_count", s_boot_count);
     }
+    cJSON_AddStringToObject(obj, "config_version", s_config_version); /* "": none yet */
     const esp_partition_t *slot = esp_ota_get_next_update_partition(NULL);
     if (slot) {
         cJSON_AddNumberToObject(obj, "ota_slot_size", slot->size);
@@ -408,6 +418,136 @@ static void run_commands(cJSON *commands)
     }
 }
 
+/* --- Remote configuration -------------------------------------------------- */
+
+static void notify_config(void)
+{
+    if (!s_config_handler) {
+        return;
+    }
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    char *json = s_config ? cJSON_PrintUnformatted(s_config) : NULL;
+    xSemaphoreGive(s_config_lock);
+    s_config_handler(json ? json : "{}", s_config_ctx);
+    free(json);
+}
+
+/* Replaces the configuration; save: also write it to NVS. Takes ownership of values. */
+static void set_config(cJSON *values, const char *version, bool save)
+{
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    cJSON_Delete(s_config);
+    s_config = values;
+    snprintf(s_config_version, sizeof(s_config_version), "%s", version);
+    char *json = save && values ? cJSON_PrintUnformatted(values) : NULL;
+    xSemaphoreGive(s_config_lock);
+
+    nvs_handle_t nvs;
+    if (save && nvs_open("otter", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_str(nvs, "cfg", json ? json : "{}");
+        nvs_set_str(nvs, "cfg_ver", version);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    free(json);
+}
+
+static void load_config(void)
+{
+    nvs_handle_t nvs;
+    if (nvs_open("otter", NVS_READONLY, &nvs) != ESP_OK) {
+        return;
+    }
+    char version[sizeof(s_config_version)];
+    size_t version_len = sizeof(version), json_len = 0;
+    if (nvs_get_str(nvs, "cfg_ver", version, &version_len) == ESP_OK &&
+        nvs_get_str(nvs, "cfg", NULL, &json_len) == ESP_OK) {
+        char *json = malloc(json_len);
+        if (json && nvs_get_str(nvs, "cfg", json, &json_len) == ESP_OK) {
+            cJSON *values = cJSON_Parse(json);
+            if (cJSON_IsObject(values)) {
+                set_config(values, version, false);
+            } else {
+                cJSON_Delete(values);
+            }
+        }
+        free(json);
+    }
+    nvs_close(nvs);
+}
+
+static void apply_config_order(cJSON *config)
+{
+    cJSON *version = cJSON_GetObjectItem(config, "version");
+    cJSON *values = cJSON_GetObjectItem(config, "values");
+    if (!cJSON_IsString(version) || !cJSON_IsObject(values)) {
+        ESP_LOGE(TAG, "malformed configuration");
+        return;
+    }
+    cJSON *copy = cJSON_Duplicate(values, true);
+    set_config(copy, version->valuestring, true);
+    ESP_LOGI(TAG, "configuration %s received", version->valuestring[0] ? version->valuestring : "(empty)");
+    notify_config();
+    s_checkin_again = true; /* confirm the new version right away: the dashboard shows it in sync */
+}
+
+esp_err_t otter_on_config(otter_config_handler_t handler, void *ctx)
+{
+    s_config_handler = handler;
+    s_config_ctx = ctx;
+    if (s_started) {
+        notify_config();
+    }
+    return ESP_OK;
+}
+
+static cJSON *config_item(const char *key)
+{
+    return s_config ? cJSON_GetObjectItem(s_config, key) : NULL;
+}
+
+int otter_config_get_int(const char *key, int def)
+{
+    if (!s_config_lock) {
+        return def;
+    }
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    cJSON *item = config_item(key);
+    int value = cJSON_IsNumber(item) ? item->valueint : def;
+    xSemaphoreGive(s_config_lock);
+    return value;
+}
+
+bool otter_config_get_bool(const char *key, bool def)
+{
+    if (!s_config_lock) {
+        return def;
+    }
+    xSemaphoreTake(s_config_lock, portMAX_DELAY);
+    cJSON *item = config_item(key);
+    bool value = cJSON_IsBool(item) ? cJSON_IsTrue(item) : def;
+    xSemaphoreGive(s_config_lock);
+    return value;
+}
+
+bool otter_config_get_str(const char *key, char *buf, size_t size, const char *def)
+{
+    bool found = false;
+    if (s_config_lock) {
+        xSemaphoreTake(s_config_lock, portMAX_DELAY);
+        cJSON *item = config_item(key);
+        if (cJSON_IsString(item)) {
+            snprintf(buf, size, "%s", item->valuestring);
+            found = true;
+        }
+        xSemaphoreGive(s_config_lock);
+    }
+    if (!found && def) {
+        snprintf(buf, size, "%s", def);
+    }
+    return found;
+}
+
 /* --- Check-in (continued) ------------------------------------------------- */
 
 /* Returns true when the server answered. Fills order when an update is scheduled. */
@@ -437,6 +577,10 @@ static bool checkin(update_order_t *order)
         if (cJSON_IsString(token) && strlen(token->valuestring) < sizeof(s_token)) {
             save_token(token->valuestring);
             ESP_LOGI(TAG, "enrolled: this device now has its own token");
+        }
+        cJSON *config = cJSON_GetObjectItem(root, "config");
+        if (cJSON_IsObject(config)) {
+            apply_config_order(config);
         }
         cJSON *commands = cJSON_GetObjectItem(root, "commands");
         if (cJSON_IsArray(commands)) {
@@ -789,6 +933,8 @@ esp_err_t otter_start(const otter_config_t *config)
     }
     count_boot();
     load_token();
+    s_config_lock = xSemaphoreCreateMutex();
+    load_config();
     if (!s_cfg.rollback_timeout_s) {
         s_cfg.rollback_timeout_s = 300;
     }
@@ -802,5 +948,7 @@ esp_err_t otter_start(const otter_config_t *config)
 
     ESP_LOGI(TAG, "agent started: %s %s on %s, server %s", s_cfg.app_name, s_cfg.version, s_cfg.hw,
              s_cfg.server_url);
+    s_started = true;
+    notify_config(); /* the saved configuration applies from boot, even offline */
     return xTaskCreate(otter_task, "otter", 8192, NULL, 5, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }

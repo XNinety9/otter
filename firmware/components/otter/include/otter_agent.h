@@ -57,6 +57,21 @@ typedef esp_err_t (*otter_command_handler_t)(const char *args, char *result, siz
  * registers its own (blink an LED, beep…). Names: lowercase letters, digits and _. */
 esp_err_t otter_register_command(const char *name, otter_command_handler_t handler, void *ctx);
 
+/* Remote configuration: key/value settings edited in Otter, per tag and per device. The
+ * agent keeps the last one in NVS, so it applies from boot even offline. */
+
+/* Called with the configuration (a JSON object, "{}" without any) once the agent has started,
+ * then each time it changes in Otter, from the agent's task. Register before or after
+ * otter_start(). */
+typedef void (*otter_config_handler_t)(const char *config_json, void *ctx);
+esp_err_t otter_on_config(otter_config_handler_t handler, void *ctx);
+
+/* The current value of a key, or def when it is missing or of another type. Thread-safe. */
+int otter_config_get_int(const char *key, int def);
+bool otter_config_get_bool(const char *key, bool def);
+/* Copies a string value into buf; returns false (and copies def, if any) when missing. */
+bool otter_config_get_str(const char *key, char *buf, size_t size, const char *def);
+
 #ifdef __cplusplus
 }
 #endif

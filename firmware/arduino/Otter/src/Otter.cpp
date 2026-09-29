@@ -209,6 +209,7 @@ bool OtterAgent::checkin(Order &order) {
 #endif
   // No boot_count: the server spots restarts from uptime_s going down.
   doc["reset_reason"] = resetReason();
+  doc["config_version"] = _configVersion;  // "": none yet
   String body;
   serializeJson(doc, body);
 
@@ -226,6 +227,16 @@ bool OtterAgent::checkin(Order &order) {
   }
   uint32_t interval = resp["checkin_interval_s"] | 0;
   if (interval > 0) _intervalS = interval;
+
+  JsonObject config = resp["config"];
+  if (!config.isNull() && config["values"].is<JsonObject>()) {
+    _configVersion = config["version"] | "";
+    _configJson = "";
+    serializeJson(config["values"], _configJson);
+    OTTER_LOG("configuration %s received", _configVersion.c_str());
+    if (_configHandler) _configHandler(_configJson);
+    _checkinAgain = true;  // confirm the new version right away
+  }
 
   for (JsonObject command : resp["commands"].as<JsonArray>()) {
     const char *name = command["name"] | "";

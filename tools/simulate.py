@@ -6,12 +6,17 @@
 Each fake device checks in periodically; when given an update it downloads the image
 (slowly, to watch progress bars), checks its SHA-256, "reboots" and comes back on the
 new version -- or rolls back, depending on --fail-rate.
+
+Like real devices, fake ones keep the token they get when enrolling: in --tokens (default
+~/.cache/otter-simulator.json), so a later run can still check in as them.
 """
 
 import argparse
 import asyncio
 import hashlib
 import json
+import os
+from pathlib import Path
 import random
 import ssl
 
@@ -20,6 +25,21 @@ import httpx
 APPS = [("weather-station", "esp32"), ("plant-sensor", "esp8266"), ("led-strip", "esp32c3")]
 # OTA slot sizes of common layouts: ESP-IDF's two-OTA default, a 4 MB ESP8266, 1.9 MB slots.
 SLOT_SIZES = {"esp32": 0x140000, "esp8266": 0xFB000, "esp32c3": 0x1E0000}
+
+
+TOKENS: dict[str, str] = {}
+
+
+def save_token(args: argparse.Namespace, mac: str, token: str | None) -> None:
+    key = f"{args.server} {mac}"
+    if token:
+        TOKENS[key] = token
+    else:
+        TOKENS.pop(key, None)
+    path = Path(args.tokens)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(TOKENS, indent=1))
+    os.chmod(path, 0o600)
 
 
 class FakeDevice:
@@ -32,7 +52,9 @@ class FakeDevice:
         self.boot = asyncio.get_running_loop().time()
         self.boots = 1
         self.reset_reason = "power_on"
-        self.token = None  # its own token once enrolled (see "Authentication" in docs/protocol.md)
+        # Its own token once enrolled (see "Authentication" in docs/protocol.md), kept across runs.
+        self.token = TOKENS.get(f"{args.server} {self.mac}")
+        self.config_version, self.config = "", {}
         self.interval = args.interval or 30
 
     @property
@@ -51,6 +73,10 @@ class FakeDevice:
             started = loop.time()
             try:
                 resp = await self.checkin(client)
+                if config := resp.get("config"):
+                    self.config_version, self.config = config["version"], config["values"]
+                    self.log(f"configuration: {self.config}")
+                    continue  # confirm it right away
                 if commands := resp.get("commands"):
                     await self.run_commands(client, commands)
                     continue  # more may be right behind
@@ -106,6 +132,7 @@ class FakeDevice:
                 "ota_slot_size": SLOT_SIZES[self.hw],
                 "reset_reason": self.reset_reason,
                 "boot_count": self.boots,
+                "config_version": self.config_version,
                 "wait_s": 0 if self.args.no_long_poll else int(self.interval),
             },
             timeout=self.interval + 15,
@@ -113,10 +140,12 @@ class FakeDevice:
         if res.status_code == 401 and self.token:
             self.log("token refused, enrolling again with the fleet key")
             self.token = None
+            save_token(self.args, self.mac, None)
         res.raise_for_status()
         data = res.json()
         if data.get("token"):
             self.token = data["token"]
+            save_token(self.args, self.mac, self.token)
         return data
 
     async def report(self, client: httpx.AsyncClient, dep: int, state: str, progress=0, error=None) -> bool:
@@ -181,11 +210,15 @@ async def main() -> None:
                         help="0..1, share of downloads cut by a (retryable) network error")
     parser.add_argument("--key", help="fleet key (X-Otter-Key)")
     parser.add_argument("--no-long-poll", action="store_true", help="plain periodic check-ins")
+    parser.add_argument("--tokens", default=str(Path.home() / ".cache" / "otter-simulator.json"),
+                        help="where fake devices keep their tokens between runs")
     parser.add_argument("--ca", help="CA certificate (PEM) to trust for an https:// server, e.g. Caddy's local CA")
     args = parser.parse_args()
 
     verify = ssl.create_default_context(cafile=args.ca) if args.ca else True
     async with httpx.AsyncClient(base_url=args.server, timeout=30, verify=verify) as client:
+        if Path(args.tokens).exists():
+            TOKENS.update(json.loads(Path(args.tokens).read_text()))
         devices = [FakeDevice(n, args) for n in range(args.count)]
         await asyncio.gather(*(d.run(client) for d in devices))
 

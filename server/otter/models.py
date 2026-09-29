@@ -54,6 +54,7 @@ class Device(Base):
     token_used_at: Mapped[datetime | None]  # once set, the fleet key no longer works for this device
     revoked_at: Mapped[datetime | None]
     approved: Mapped[bool] = mapped_column(default=True, server_default="1")  # False: awaiting approval
+    config_version: Mapped[str | None]  # version of the configuration the device reports having (#23)
     first_seen: Mapped[datetime] = mapped_column(default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(default=utcnow)
     channel: Mapped[str | None]  # follows this release channel automatically; None = manual updates
@@ -207,3 +208,16 @@ class Command(Base):
     done_at: Mapped[datetime | None]
 
     device: Mapped[Device] = relationship(back_populates="commands")
+
+
+class ConfigValue(Base):
+    """One remote configuration value (#23), for a device or for a tag (by name: the setting
+    outlives the tag being unused for a while). See devconfig.py."""
+
+    __tablename__ = "config_values"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int | None] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True)
+    tag: Mapped[str | None] = mapped_column(String(32), index=True)
+    key: Mapped[str] = mapped_column(String(32))
+    value: Mapped[str]  # JSON: a string, number or boolean

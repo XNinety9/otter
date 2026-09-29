@@ -224,6 +224,16 @@ dialog#rollout-dialog::backdrop { background: rgb(0 0 0 / .45); }
 #user { font-size: 13px; }
 
 .chan-chip { font-size: 11px; padding: 0 7px; border-radius: 99px; color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); white-space: nowrap; }
+.config-state { margin: 0 0 6px; font-size: 13px; }
+.config-state.pending { color: var(--accent); }
+.config-state.unsupported { color: var(--muted); }
+.config-table { border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
+.config-table td { padding: 3px 14px 3px 0; border-top: 1px solid var(--border); }
+.config-table td.key { font-family: var(--mono, monospace); }
+.config-table td.src { color: var(--muted); }
+.config-edit { display: grid; gap: 6px; font-size: 13px; }
+.config-edit textarea { font-family: var(--mono, monospace); font-size: 12px; width: 100%; box-sizing: border-box; resize: vertical; }
+.config-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .access { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 13px; }
 .access-state.revoked { color: var(--err); font-weight: 600; }
 .access-state.awaiting_approval { color: var(--warn); font-weight: 600; }
