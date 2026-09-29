@@ -75,6 +75,17 @@ h2 { margin: 0; font-size: 16px; }
 .chip .n { color: var(--muted); margin-left: 4px; font-variant-numeric: tabular-nums; }
 .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .chip[aria-pressed="true"] .n { color: inherit; opacity: .8; }
+#tag-filter { max-width: 200px; }
+.row-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.row-tags:empty { display: none; }
+.tag-chip { font-size: 11px; padding: 0 7px; border-radius: 99px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); white-space: nowrap; }
+.tag-editor { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-list:empty::before { content: "No tag yet."; color: var(--muted); }
+.tag-list .tag-chip { font-size: 13px; padding: 2px 4px 2px 10px; display: inline-flex; align-items: center; gap: 2px; }
+.tag-list .tag-chip button { border: none; background: none; color: inherit; padding: 0 6px; line-height: 1; }
+.tag-add { display: flex; gap: 6px; }
+.tag-add input { width: 160px; }
 #no-match .link { color: var(--accent); font-weight: 400; }
 
 .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; }

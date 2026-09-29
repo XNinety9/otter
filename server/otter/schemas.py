@@ -1,7 +1,30 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
+import re
+
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    field_validator,
+    model_validator,
+)
+
+TAG_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
+
+
+def normalize_tag(value: str) -> str:
+    tag = value.strip().lower().replace(" ", "-")
+    if not TAG_PATTERN.fullmatch(tag):
+        raise ValueError(f"invalid tag {value!r}: 1-32 chars, a-z, 0-9, '-' or '_'")
+    return tag
+
+
+TagName = Annotated[str, AfterValidator(normalize_tag)]
 
 UtcDatetime = Annotated[
     datetime, PlainSerializer(lambda dt: dt.replace(tzinfo=UTC).isoformat(), return_type=str)
@@ -94,12 +117,30 @@ class DeviceOut(BaseModel):
     first_seen: UtcDatetime
     last_seen: UtcDatetime
     last_deployment: DeploymentOut | None
+    tags: Annotated[list[str], BeforeValidator(lambda tags: [getattr(t, "name", t) for t in tags])]
 
 
 class DevicePatch(BaseModel):
+    """Only the fields sent are changed."""
+
     name: str | None = Field(default=None, max_length=64)
+    tags: list[TagName] | None = Field(default=None, max_length=20)
+
+
+class TagOut(BaseModel):
+    name: str
+    devices: int
 
 
 class DeployIn(BaseModel):
+    """Targets the given devices, plus every device of the given tags running the firmware's app."""
+
     firmware_id: int
-    device_ids: list[int] = Field(min_length=1)
+    device_ids: list[int] = []
+    tags: list[TagName] = []
+
+    @model_validator(mode="after")
+    def has_targets(self) -> "DeployIn":
+        if not self.device_ids and not self.tags:
+            raise ValueError("give device_ids and/or tags")
+        return self

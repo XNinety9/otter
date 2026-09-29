@@ -1,12 +1,29 @@
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, String, Table, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base, utcnow
 
 ACTIVE_STATES = ("pending", "downloading", "rebooting")
 FINAL_STATES = ("success", "failed", "cancelled")
+
+
+device_tags = Table(
+    "device_tags",
+    Base.metadata,
+    Column("device_id", ForeignKey("devices.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), unique=True)
+
+    devices: Mapped[list["Device"]] = relationship(secondary=device_tags, back_populates="tags")
 
 
 class Device(Base):
@@ -27,6 +44,7 @@ class Device(Base):
     deployments: Mapped[list["Deployment"]] = relationship(
         back_populates="device", cascade="all, delete-orphan", order_by="Deployment.id"
     )
+    tags: Mapped[list[Tag]] = relationship(secondary=device_tags, back_populates="devices", order_by=Tag.name)
 
     @property
     def active_deployment(self) -> "Deployment | None":

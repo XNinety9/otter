@@ -4,16 +4,16 @@ import asyncio
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from . import config
 from .api_device import publish_device
 from .db import get_session
 from .events import broadcaster, wakeups
-from .models import ACTIVE_STATES, Deployment, Device, Firmware
-from .schemas import DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut
+from .models import ACTIVE_STATES, Deployment, Device, Firmware, Tag, device_tags
+from .schemas import DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, TagOut
 from .storage import delete_firmware_file, store_firmware
 
 router = APIRouter(prefix="/api", tags=["ui"])
@@ -29,7 +29,11 @@ def get_config():
 
 @router.get("/devices", response_model=list[DeviceOut])
 def list_devices(session: Session = Depends(get_session)):
-    return session.scalars(select(Device).order_by(Device.app, Device.name, Device.mac)).all()
+    return session.scalars(
+        select(Device)
+        .options(selectinload(Device.tags), selectinload(Device.deployments))
+        .order_by(Device.app, Device.name, Device.mac)
+    ).all()
 
 
 @router.get("/devices/{device_id}/deployments", response_model=list[DeploymentOut])
@@ -43,16 +47,46 @@ def device_deployments(device_id: int, limit: int = 100, session: Session = Depe
 @router.patch("/devices/{device_id}", response_model=DeviceOut)
 def patch_device(device_id: int, body: DevicePatch, session: Session = Depends(get_session)):
     device = session.get(Device, device_id) or _404("device")
-    device.name = (body.name or "").strip() or None
+    if "name" in body.model_fields_set:
+        device.name = (body.name or "").strip() or None
+    if "tags" in body.model_fields_set:
+        device.tags = [get_or_create_tag(session, name) for name in sorted(set(body.tags or []))]
+        session.flush()
+        delete_unused_tags(session)
     session.commit()
     publish_device(device)
     return device
+
+
+def get_or_create_tag(session: Session, name: str) -> Tag:
+    tag = session.scalar(select(Tag).where(Tag.name == name))
+    if tag is None:
+        tag = Tag(name=name)
+        session.add(tag)
+    return tag
+
+
+def delete_unused_tags(session: Session) -> None:
+    session.execute(delete(Tag).where(~Tag.devices.any()))
+
+
+@router.get("/tags", response_model=list[TagOut])
+def list_tags(session: Session = Depends(get_session)):
+    rows = session.execute(
+        select(Tag.name, func.count(device_tags.c.device_id))
+        .join(device_tags, isouter=True)
+        .group_by(Tag.id)
+        .order_by(Tag.name)
+    ).all()
+    return [TagOut(name=name, devices=count) for name, count in rows]
 
 
 @router.delete("/devices/{device_id}", status_code=204)
 def delete_device(device_id: int, session: Session = Depends(get_session)):
     device = session.get(Device, device_id) or _404("device")
     session.delete(device)
+    session.flush()
+    delete_unused_tags(session)
     session.commit()
     broadcaster.publish("device_deleted", {"id": device_id})
 
@@ -117,11 +151,27 @@ def _cleanup_orphan(session: Session, sha: str) -> None:
 @router.post("/deployments", response_model=list[DeviceOut], status_code=201)
 def create_deployments(body: DeployIn, session: Session = Depends(get_session)):
     fw = session.get(Firmware, body.firmware_id) or _404("firmware")
-    devices = session.scalars(select(Device).where(Device.id.in_(body.device_ids))).all()
+    devices = list(session.scalars(select(Device).where(Device.id.in_(body.device_ids))).all())
     if len(devices) != len(set(body.device_ids)):
         raise HTTPException(404, "unknown device")
     if wrong := [d.mac for d in devices if d.hw != fw.hw]:
         raise HTTPException(422, f"firmware is for {fw.hw}, not compatible with {', '.join(wrong)}")
+
+    if body.tags:
+        # A tag can mix hardware and apps: only target the devices this firmware is built for,
+        # and skip those already running it.
+        tagged = session.scalars(
+            select(Device)
+            .where(Device.tags.any(Tag.name.in_(body.tags)), Device.app == fw.app, Device.hw == fw.hw)
+            .order_by(Device.id)
+        ).all()
+        tag_list = ", ".join(body.tags)
+        if not tagged:
+            raise HTTPException(422, f"no {fw.app} / {fw.hw} device tagged {tag_list}")
+        outdated = [d for d in tagged if d.fw_version != fw.version]
+        if not outdated and not devices:
+            raise HTTPException(422, f"every {fw.app} device tagged {tag_list} already runs {fw.version}")
+        devices += [d for d in outdated if d not in devices]
 
     for device in devices:
         if previous := device.active_deployment:
