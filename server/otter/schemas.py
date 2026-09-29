@@ -25,6 +25,7 @@ def normalize_tag(value: str) -> str:
 
 
 TagName = Annotated[str, AfterValidator(normalize_tag)]
+ChannelName = TagName  # same rules: lowercase, a-z 0-9 - _
 
 UtcDatetime = Annotated[
     datetime, PlainSerializer(lambda dt: dt.replace(tzinfo=UTC).isoformat(), return_type=str)
@@ -89,6 +90,7 @@ class FirmwareOut(BaseModel):
     sha256: str
     notes: str | None
     uploaded_at: UtcDatetime
+    channel: str | None = None
 
 
 class DeploymentOut(BaseModel):
@@ -123,6 +125,7 @@ class DeviceOut(BaseModel):
     last_seen: UtcDatetime
     last_deployment: DeploymentOut | None
     tags: Annotated[list[str], BeforeValidator(lambda tags: [getattr(t, "name", t) for t in tags])]
+    channel: str | None = None
 
 
 class DevicePatch(BaseModel):
@@ -130,6 +133,13 @@ class DevicePatch(BaseModel):
 
     name: str | None = Field(default=None, max_length=64)
     tags: list[TagName] | None = Field(default=None, max_length=20)
+    channel: ChannelName | None = None
+
+
+class FirmwarePatch(BaseModel):
+    """Publishes the firmware on a channel (None = unpublish)."""
+
+    channel: ChannelName | None = None
 
 
 class TagOut(BaseModel):
@@ -154,9 +164,16 @@ class DeployIn(BaseModel):
 class RolloutIn(BaseModel):
     firmware_id: int
     tags: list[TagName] = []
+    channel: ChannelName | None = None  # target its followers, and publish the firmware on it
     stages: list[int] = Field(default=[10, 50, 100], min_length=1, max_length=10)
     soak_s: int = Field(default=300, ge=0, le=7 * 86400)
     max_failure_rate: float = Field(default=0.2, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def one_target(self) -> "RolloutIn":
+        if self.tags and self.channel:
+            raise ValueError("target tags or a channel, not both")
+        return self
 
     @field_validator("stages")
     @classmethod
@@ -179,6 +196,7 @@ class RolloutOut(BaseModel):
     id: int
     firmware: FirmwareOut
     tags: list[str]
+    channel: str | None
     stages: list[RolloutStageOut]
     current_stage: int
     status: str

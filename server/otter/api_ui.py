@@ -10,13 +10,14 @@ from sqlalchemy.orm import Session, selectinload
 
 from . import config
 from .api_device import publish_device
+from .api_rollouts import reconcile_channels
 from .auth import require_user
 from .db import get_session
 from .events import broadcaster, wakeups
 from .notify import INFO, Message, notifier
 from .models import OPEN_STATES, Deployment, Device, Firmware, Tag, device_tags
 from .rollouts import cancel_open_deployments
-from .schemas import DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, TagOut
+from .schemas import DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, FirmwarePatch, TagOut, normalize_tag
 from .storage import delete_firmware_file, store_firmware
 
 router = APIRouter(prefix="/api", tags=["ui"], dependencies=[Depends(require_user)])
@@ -74,8 +75,13 @@ def patch_device(device_id: int, body: DevicePatch, session: Session = Depends(g
         device.tags = [get_or_create_tag(session, name) for name in sorted(set(body.tags or []))]
         session.flush()
         delete_unused_tags(session)
+    if "channel" in body.model_fields_set:
+        device.channel = body.channel
     session.commit()
     publish_device(device)
+    if "channel" in body.model_fields_set:
+        reconcile_channels()  # a newer firmware may be waiting on that channel
+        session.refresh(device)
     return device
 
 
@@ -127,6 +133,7 @@ def upload_firmware(
     hw: str = Form(min_length=1, max_length=32),
     version: str = Form(min_length=1, max_length=32),
     notes: str | None = Form(default=None),
+    channel: str | None = Form(default=None),
     session: Session = Depends(get_session),
 ):
     try:
@@ -134,7 +141,13 @@ def upload_firmware(
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
-    fw = Firmware(app=app.strip(), hw=hw.strip(), version=version.strip(), size=size, sha256=sha, notes=notes)
+    try:
+        channel = normalize_tag(channel) if channel and channel.strip() else None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    fw = Firmware(
+        app=app.strip(), hw=hw.strip(), version=version.strip(), size=size, sha256=sha, notes=notes, channel=channel
+    )
     session.add(fw)
     try:
         session.commit()
@@ -143,6 +156,19 @@ def upload_firmware(
         _cleanup_orphan(session, sha)
         raise HTTPException(409, f"{app} {version} for {hw} already exists") from None
     broadcaster.publish("firmwares")
+    if fw.channel:
+        reconcile_channels()
+    return fw
+
+
+@router.patch("/firmwares/{firmware_id}", response_model=FirmwareOut)
+def patch_firmware(firmware_id: int, body: FirmwarePatch, session: Session = Depends(get_session)):
+    """Publishes the firmware on a release channel: its followers are updated right away."""
+    fw = session.get(Firmware, firmware_id) or _404("firmware")
+    fw.channel = body.channel
+    session.commit()
+    broadcaster.publish("firmwares")
+    reconcile_channels()
     return fw
 
 

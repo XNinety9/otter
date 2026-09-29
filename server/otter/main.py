@@ -34,9 +34,9 @@ async def evaluate_rollouts_forever() -> None:
     while True:
         await asyncio.sleep(config.ROLLOUT_TICK_S)
         try:
-            await run_in_threadpool(api_rollouts.evaluate_now)
+            await run_in_threadpool(api_rollouts.background_pass)
         except Exception:
-            log.exception("rollout evaluation failed")
+            log.exception("background pass (rollouts, channels) failed")
 
 
 @asynccontextmanager
