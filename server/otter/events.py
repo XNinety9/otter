@@ -6,14 +6,26 @@ with call_soon_threadsafe.
 
 import asyncio
 import json
-from collections.abc import Iterator
+import logging
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+
+log = logging.getLogger("otter.events")
 
 
 class Broadcaster:
     def __init__(self) -> None:
         self._subscribers: set[asyncio.Queue[str]] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._listeners: list[Callable[[str, object], None]] = []
+
+    def add_listener(self, listener: Callable[[str, object], None]) -> None:
+        """Also called for every event, in the publishing thread (e.g. the MQTT bridge)."""
+        self._listeners.append(listener)
+
+    def remove_listener(self, listener: Callable[[str, object], None]) -> None:
+        if listener in self._listeners:
+            self._listeners.remove(listener)
 
     def bind(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -27,6 +39,11 @@ class Broadcaster:
         self._subscribers.discard(queue)
 
     def publish(self, kind: str, data: object = None) -> None:
+        for listener in list(self._listeners):
+            try:
+                listener(kind, data)
+            except Exception:
+                log.exception("event listener failed on %s", kind)
         if self._loop is None:
             return
         message = f"event: {kind}\ndata: {json.dumps(data)}\n\n"

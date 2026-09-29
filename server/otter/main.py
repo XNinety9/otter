@@ -15,6 +15,7 @@ from .db import engine
 from .events import broadcaster, wakeups
 from .metrics import REGISTRY
 from .migrate import upgrade_database
+from .mqtt import bridge
 from .notify import notifier
 
 
@@ -26,6 +27,8 @@ async def watch_offline_devices_forever() -> None:
         await asyncio.sleep(30)
         try:
             await run_in_threadpool(notifier.check_offline)
+            if bridge.connected:
+                await run_in_threadpool(bridge.publish_all)  # online/offline changes with time
         except Exception:
             log.exception("offline check failed")
 
@@ -47,12 +50,14 @@ async def lifespan(_: FastAPI):
     wakeups.bind(asyncio.get_running_loop())
     notifier.seed_offline()
     notifier.start()
+    bridge.start()
     tasks = [asyncio.create_task(watch_offline_devices_forever())]
     if config.ROLLOUT_TICK_S > 0:
         tasks.append(asyncio.create_task(evaluate_rollouts_forever()))
     yield
     for task in tasks:
         task.cancel()
+    bridge.stop()
     notifier.stop()
 
 

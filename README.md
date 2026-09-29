@@ -205,6 +205,22 @@ offline. Devices already offline when the server starts don't trigger alerts. Wi
 curl -X POST http://localhost:8000/api/notifications/test
 ```
 
+## Home Assistant
+
+Otter shows up in Home Assistant through MQTT discovery: point it at the broker your Home Assistant
+uses, and each device appears with a **Firmware** update entity (installed and latest version,
+progress while updating) plus connectivity, Wi-Fi signal, IP address and uptime.
+
+```sh
+OTTER_MQTT_URL=mqtt://user:password@homeassistant.local:1883   # mqtts:// for TLS
+```
+
+The latest version is the newest firmware for the device's app and hardware: from its release
+channels if it follows one, from the whole registry otherwise. Set `OTTER_MQTT_INSTALL=1` to let
+the entity's **Install** button deploy it. Keep it off unless the broker is protected: anyone who
+can publish on it could then trigger updates. `OTTER_MQTT_DISCOVERY_PREFIX` (default
+`homeassistant`) and `OTTER_MQTT_BASE_TOPIC` (default `otter`) change the topics.
+
 ## Monitoring
 
 `GET /metrics` serves Prometheus metrics:
