@@ -47,6 +47,13 @@ class Device(Base):
     min_free_heap: Mapped[int | None]  # lowest since boot
     reset_reason: Mapped[str | None]  # why the device last restarted: power_on, panic, brownout…
     boot_count: Mapped[int | None]
+    # Authentication (#15, see device_auth.py).
+    # A unique index, not a constraint: adding a constraint makes SQLite rebuild the table,
+    # and the ON DELETE CASCADE foreign keys would take the deployments with it.
+    token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    token_used_at: Mapped[datetime | None]  # once set, the fleet key no longer works for this device
+    revoked_at: Mapped[datetime | None]
+    approved: Mapped[bool] = mapped_column(default=True, server_default="1")  # False: awaiting approval
     first_seen: Mapped[datetime] = mapped_column(default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(default=utcnow)
     channel: Mapped[str | None]  # follows this release channel automatically; None = manual updates
@@ -62,6 +69,15 @@ class Device(Base):
     @property
     def active_deployment(self) -> "Deployment | None":
         return next((d for d in reversed(self.deployments) if d.status in ACTIVE_STATES), None)
+
+    @property
+    def auth(self) -> str:
+        """revoked, awaiting_approval, token (uses its own token) or fleet_key."""
+        if self.revoked_at is not None:
+            return "revoked"
+        if not self.approved:
+            return "awaiting_approval"
+        return "token" if self.token_used_at is not None else "fleet_key"
 
     def fits(self, firmware: "Firmware") -> bool:
         """Whether the image fits the device's OTA slot (unknown slot size: assume it does)."""

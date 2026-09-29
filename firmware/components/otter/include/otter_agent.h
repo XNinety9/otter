@@ -19,7 +19,8 @@ typedef struct {
     const char *server_url;
     /* Required. Application name, must match the firmware's app in Otter. */
     const char *app_name;
-    /* Optional. Sent as X-Otter-Key when the server requires a fleet key. */
+    /* Optional. Sent as X-Otter-Key when the server requires a fleet key, until the device
+     * gets its own token from the server (kept in NVS, namespace "otter"). */
     const char *fleet_key;
     /* Optional. Hardware family, defaults to CONFIG_IDF_TARGET ("esp32", "esp32c3"…). */
     const char *hw;

@@ -51,6 +51,9 @@ static otter_config_t s_cfg;
 static uint32_t s_interval_s = 30;
 static bool s_pending_verify;
 static int32_t s_boot_count = -1; /* -1: unknown (no NVS) */
+/* This device's own token, from the server at enrollment (see "Authentication" in
+ * docs/protocol.md). Empty: authenticate with the fleet key. */
+static char s_token[80];
 
 #define MAX_COMMANDS 8
 typedef struct {
@@ -76,7 +79,11 @@ static esp_http_client_handle_t new_client(const char *url, esp_http_client_meth
 #endif
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (client && s_cfg.fleet_key) {
+    if (client && s_token[0]) {
+        char bearer[sizeof(s_token) + 8];
+        snprintf(bearer, sizeof(bearer), "Bearer %s", s_token);
+        esp_http_client_set_header(client, "Authorization", bearer);
+    } else if (client && s_cfg.fleet_key) {
         esp_http_client_set_header(client, "X-Otter-Key", s_cfg.fleet_key);
     }
     return client;
@@ -188,6 +195,35 @@ static const char *reset_reason(void)
     case ESP_RST_CPU_LOCKUP: return "cpu_lockup";
     default: return "unknown";
     }
+}
+
+/* The token lives in NVS next to the boot counter. */
+static void load_token(void)
+{
+    nvs_handle_t nvs;
+    size_t len = sizeof(s_token);
+    if (nvs_open("otter", NVS_READONLY, &nvs) == ESP_OK) {
+        if (nvs_get_str(nvs, "token", s_token, &len) != ESP_OK) {
+            s_token[0] = '\0';
+        }
+        nvs_close(nvs);
+    }
+}
+
+static void save_token(const char *token)
+{
+    snprintf(s_token, sizeof(s_token), "%s", token ? token : "");
+    nvs_handle_t nvs;
+    if (nvs_open("otter", NVS_READWRITE, &nvs) != ESP_OK) {
+        return; /* kept in RAM only: a reboot enrolls again */
+    }
+    if (s_token[0]) {
+        nvs_set_str(nvs, "token", s_token);
+    } else {
+        nvs_erase_key(nvs, "token");
+    }
+    nvs_commit(nvs);
+    nvs_close(nvs);
 }
 
 /* Counts boots in NVS, so the server can tell a restart from a long silence. Needs
@@ -393,6 +429,11 @@ static bool checkin(update_order_t *order)
         if (cJSON_IsNumber(interval) && interval->valueint > 0) {
             s_interval_s = interval->valueint;
         }
+        cJSON *token = cJSON_GetObjectItem(root, "token");
+        if (cJSON_IsString(token) && strlen(token->valuestring) < sizeof(s_token)) {
+            save_token(token->valuestring);
+            ESP_LOGI(TAG, "enrolled: this device now has its own token");
+        }
         cJSON *commands = cJSON_GetObjectItem(root, "commands");
         if (cJSON_IsArray(commands)) {
             run_commands(commands);
@@ -412,6 +453,12 @@ static bool checkin(update_order_t *order)
             }
         }
         cJSON_Delete(root);
+    } else if (status == 401 && s_token[0]) {
+        /* Re-enrolled in Otter (or its database was reset): enroll again with the fleet key. */
+        ESP_LOGW(TAG, "token refused, enrolling again with the fleet key");
+        save_token(NULL);
+    } else if (status == 403) {
+        ESP_LOGW(TAG, "check-in refused: %s", resp); /* revoked, or awaiting approval */
     } else {
         ESP_LOGW(TAG, "check-in failed (HTTP %d)", status);
     }
@@ -703,6 +750,7 @@ esp_err_t otter_start(const otter_config_t *config)
         s_cfg.version = esp_app_get_description()->version;
     }
     count_boot();
+    load_token();
     if (!s_cfg.rollback_timeout_s) {
         s_cfg.rollback_timeout_s = 300;
     }

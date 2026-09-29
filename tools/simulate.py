@@ -32,8 +32,14 @@ class FakeDevice:
         self.boot = asyncio.get_running_loop().time()
         self.boots = 1
         self.reset_reason = "power_on"
-        self.headers = {"X-Otter-Key": args.key} if args.key else {}
+        self.token = None  # its own token once enrolled (see "Authentication" in docs/protocol.md)
         self.interval = args.interval or 30
+
+    @property
+    def headers(self) -> dict[str, str]:
+        if self.token:
+            return {"Authorization": f"Bearer {self.token}"}
+        return {"X-Otter-Key": self.args.key} if self.args.key else {}
 
     def log(self, msg: str) -> None:
         print(f"[{self.mac}] {msg}", flush=True)
@@ -104,8 +110,14 @@ class FakeDevice:
             },
             timeout=self.interval + 15,
         )
+        if res.status_code == 401 and self.token:
+            self.log("token refused, enrolling again with the fleet key")
+            self.token = None
         res.raise_for_status()
-        return res.json()
+        data = res.json()
+        if data.get("token"):
+            self.token = data["token"]
+        return data
 
     async def report(self, client: httpx.AsyncClient, dep: int, state: str, progress=0, error=None) -> bool:
         res = await client.post(

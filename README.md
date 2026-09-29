@@ -57,7 +57,8 @@ Open http://localhost:8000.
 |--------------------------|----------------|----------------------------------------------------------|
 | `OTTER_DATA_DIR`         | `./data`       | SQLite database and firmware images                      |
 | `OTTER_CHECKIN_INTERVAL` | `30`           | Seconds between device check-ins                         |
-| `OTTER_FLEET_KEY`        | *(empty)*      | Shared secret devices send in `X-Otter-Key`              |
+| `OTTER_FLEET_KEY`        | *(empty)*      | Shared secret devices enroll with (`X-Otter-Key`)        |
+| `OTTER_DEVICE_APPROVAL`  | *(off)*        | `1`: new devices wait for an approval in the dashboard   |
 | `OTTER_PUBLIC_URL`       | *(from request)* | Base URL put in download links, e.g. `http://10.0.0.5:8000` |
 
 ## Run with Docker
@@ -145,6 +146,13 @@ user's sessions), `list-users`, `delete-user`.
 Passwords are hashed with argon2; sessions and tokens are stored as SHA-256 hashes only. Logins are
 limited to 10 failures per address every 5 minutes. **Serve Otter over HTTPS as soon as it leaves
 your desk**: over plain HTTP, passwords and cookies can be sniffed on the network (see [HTTPS](#https)).
+
+### Device credentials
+
+Devices enroll with the fleet key and then get a token of their own (the ESP-IDF agent keeps it
+in NVS): once a device uses it, the fleet key alone can't impersonate it. From a device's panel,
+**Revoke** blocks it and **Re-enroll** lets it get a new token. Set `OTTER_DEVICE_APPROVAL=1` to
+approve each new device before it can check in. Details: [Authentication](docs/protocol.md#authentication).
 
 ## Try it without hardware
 

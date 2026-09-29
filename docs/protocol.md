@@ -4,12 +4,39 @@ This is the contract between a device agent (ESP-IDF component, Arduino library,
 and the Otter server: JSON requests over HTTP(S), always initiated by the device, so devices
 never need an open port. **Use HTTPS**: see [Security](#security) for what plain HTTP exposes.
 
-All device endpoints live under `/api/v1`. If the server is configured with a fleet key
-(`OTTER_FLEET_KEY`), every device request must send it:
+All device endpoints live under `/api/v1`.
+
+### Authentication
+
+A device first authenticates with the fleet key (`OTTER_FLEET_KEY` on the server; empty = no
+check, LAN only):
 
 ```
 X-Otter-Key: <fleet key>
 ```
+
+The check-in response to such a request carries a `token` for this device alone. The device
+stores it (NVS for the ESP-IDF agent) and sends it instead on every request, downloads included:
+
+```
+Authorization: Bearer otd_…
+```
+
+Once a device has used its token, the fleet key no longer works for it: someone who extracted
+the fleet key from any device's flash can't act as it. A token only acts for its own device
+(its check-ins, deployments and commands). Agents that ignore `token` keep working with the
+fleet key; they just get a new, unused token at each check-in. The server stores SHA-256 hashes
+only.
+
+| Answer | Meaning | What the device does |
+|---|---|---|
+| `401` to a token | unknown token: re-enrolled from the dashboard, or database reset | forget it, check in with the fleet key |
+| `401` to the fleet key | wrong key, or this device uses a token | nothing useful: check the configuration |
+| `403` | revoked, or awaiting approval (`OTTER_DEVICE_APPROVAL`) | retry later |
+
+From the dashboard, **Revoke** blocks a device (token and fleet key) and **Re-enroll** lets its
+next fleet-key check-in get a new token. With `OTTER_DEVICE_APPROVAL=1`, new devices appear in the
+dashboard but are refused until approved.
 
 ## 1. Check-in
 
@@ -41,7 +68,9 @@ Response:
 ```json
 {
   "checkin_interval_s": 30,
-  "update": null
+  "update": null,
+  "commands": [],
+  "token": null                   // a new token when the request used the fleet key
 }
 ```
 
@@ -202,7 +231,7 @@ What protects what, and what doesn't yet:
 | Someone on the network reads the fleet key, device data, or dashboard passwords and cookies | **exposed** | protected | HTTPS: ESP-IDF done, Arduino to do ([#17](https://github.com/XNinety9/otter/issues/17)) |
 | Someone on the network (e.g. ARP spoofing) serves a malicious firmware | **exposed**: `sha256` comes through the same channel, it only detects corruption | protected, **if the device verifies the certificate** | HTTPS: ESP-IDF done, Arduino to do (#17) |
 | The server itself, or its storage, is compromised and serves a malicious firmware | exposed | exposed | signed firmware: [#18](https://github.com/XNinety9/otter/issues/18) |
-| A device's key is extracted from its flash | the shared fleet key opens every device's API | same | per-device tokens: [#15](https://github.com/XNinety9/otter/issues/15) |
+| A device's key is extracted from its flash | the shared fleet key opens every device's API | same | per-device tokens (ESP-IDF agent): the fleet key alone can't act as an enrolled device, and a device can be revoked alone ([#15](https://github.com/XNinety9/otter/issues/15)); an extracted fleet key can still enroll new devices, unless `OTTER_DEVICE_APPROVAL` is on |
 
 Deployment options:
 
@@ -214,7 +243,7 @@ Deployment options:
   it, the ESP-IDF certificate bundle is used, which covers public certificates such as Let's
   Encrypt but not a private CA. Validated on an ESP32-C6 with Caddy's local CA: check-ins and
   OTA updates over HTTPS, at the same speed as plain HTTP (~220 KB/s).
-- **Arduino library**: plain HTTP only for now (#17).
+- **Arduino library**: plain HTTP and the fleet key only for now (#17, #15).
 
 Devices must verify the server's certificate: TLS without verification still lets anyone on
 the network impersonate the server.

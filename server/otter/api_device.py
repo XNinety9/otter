@@ -2,7 +2,6 @@
 
 import asyncio
 import re
-import secrets
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,22 +11,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import commands, config
+from .auth import token_hash
 from .db import SessionLocal, get_session, utcnow
+from .device_auth import DeviceAuth, authenticate, check_access, new_token
 from .events import broadcaster, wakeups
 from .metrics import CHECKINS, CRASHES, DOWNLOAD_BYTES, DOWNLOADS
 from .notify import notifier
 from .models import CRASH_RESETS, Command, Deployment, Device, Firmware
 from .schemas import CheckinIn, CheckinOut, CommandOrder, CommandResultIn, DeviceOut, ProgressIn, UpdateOrder
 from .storage import firmware_path
-
-
-def require_fleet_key(request: Request) -> None:
-    if not config.FLEET_KEY:
-        return
-    # Header for normal calls; query param as a fallback for OTA clients that can't set headers.
-    given = request.headers.get("x-otter-key") or request.query_params.get("key") or ""
-    if not secrets.compare_digest(given, config.FLEET_KEY):
-        raise HTTPException(401, "invalid fleet key")
 
 
 # Longest a check-in may be held open (long polling).
@@ -43,7 +35,7 @@ def is_transient(error: str | None, retryable: bool | None) -> bool:
     return any(marker in (error or "").lower() for marker in TRANSIENT_ERRORS)
 
 
-router = APIRouter(prefix="/api/v1", tags=["device"], dependencies=[Depends(require_fleet_key)])
+router = APIRouter(prefix="/api/v1", tags=["device"])
 
 
 def publish_device(device: Device) -> None:
@@ -51,26 +43,33 @@ def publish_device(device: Device) -> None:
 
 
 @router.post("/checkin", response_model=CheckinOut)
-async def checkin(body: CheckinIn, request: Request):
+async def checkin(body: CheckinIn, request: Request, auth: DeviceAuth = Depends(authenticate)):
     with wakeups.watch(body.mac) as scheduled:
-        order, orders = await run_in_threadpool(record_checkin, body, request)
+        order, orders, token = await run_in_threadpool(record_checkin, body, request, auth)
         if order is None and not orders and body.wait_s:
             try:
                 await asyncio.wait_for(scheduled.wait(), min(body.wait_s, MAX_WAIT_S))
                 # Something was scheduled while we waited: re-evaluate to build the orders.
-                order, orders = await run_in_threadpool(record_checkin, body, request)
+                order, orders, token = await run_in_threadpool(record_checkin, body, request, auth)
             except TimeoutError:
                 pass
-    return CheckinOut(checkin_interval_s=config.CHECKIN_INTERVAL_S, update=order, commands=orders)
+    return CheckinOut(checkin_interval_s=config.CHECKIN_INTERVAL_S, update=order, commands=orders, token=token)
 
 
-def record_checkin(body: CheckinIn, request: Request) -> tuple[UpdateOrder | None, list[CommandOrder]]:
+def record_checkin(
+    body: CheckinIn, request: Request, auth: DeviceAuth
+) -> tuple[UpdateOrder | None, list[CommandOrder], str | None]:
     with SessionLocal() as session:
         device = session.scalar(select(Device).where(Device.mac == body.mac))
         is_new = device is None
         if is_new:
+            if auth.device_id is not None:
+                raise HTTPException(403, "this token belongs to another device")
             device = Device(mac=body.mac, hw=body.hw, app=body.app, fw_version=body.fw_version)
+            device.approved = not config.DEVICE_APPROVAL
             session.add(device)
+        else:
+            check_access(auth, device)
 
         device.hw = body.hw
         device.app = body.app
@@ -86,6 +85,18 @@ def record_checkin(body: CheckinIn, request: Request) -> tuple[UpdateOrder | Non
         crashed = rebooted and body.reset_reason in CRASH_RESETS
         device.last_seen = utcnow()
         CHECKINS.labels(body.app).inc()
+
+        if not device.approved:
+            session.commit()
+            publish_device(device)
+            if is_new:
+                notifier.emit("device_new", device_id=device.id)
+            raise HTTPException(403, "device awaiting approval in Otter")
+        # Until the device uses a token, each fleet-key check-in gets a fresh one.
+        token = None
+        if auth.fleet and device.token_used_at is None:
+            token = new_token()
+            device.token_hash = token_hash(token)
 
         order = None
         failed = None
@@ -124,7 +135,7 @@ def record_checkin(body: CheckinIn, request: Request) -> tuple[UpdateOrder | Non
         if crashed:
             CRASHES.labels(body.app, body.reset_reason).inc()
             notifier.emit("device_crashed", device_id=device.id, reason=body.reset_reason)
-        return order, commands.as_orders(sent)
+        return order, commands.as_orders(sent), token
 
 
 def restarted(device: Device, body: CheckinIn) -> bool:
@@ -135,10 +146,16 @@ def restarted(device: Device, body: CheckinIn) -> bool:
 
 
 @router.post("/commands/{command_id}/result")
-def command_result(command_id: int, body: CommandResultIn, session: Session = Depends(get_session)):
+def command_result(
+    command_id: int,
+    body: CommandResultIn,
+    auth: DeviceAuth = Depends(authenticate),
+    session: Session = Depends(get_session),
+):
     command = session.get(Command, command_id)
     if command is None:
         raise HTTPException(404, "unknown command")
+    check_access(auth, command.device)
     commands.record_result(command, body.ok, body.message)
     session.commit()
     commands.publish(command)
@@ -146,10 +163,16 @@ def command_result(command_id: int, body: CommandResultIn, session: Session = De
 
 
 @router.post("/deployments/{deployment_id}/progress")
-def report_progress(deployment_id: int, body: ProgressIn, session: Session = Depends(get_session)):
+def report_progress(
+    deployment_id: int,
+    body: ProgressIn,
+    auth: DeviceAuth = Depends(authenticate),
+    session: Session = Depends(get_session),
+):
     deployment = session.get(Deployment, deployment_id)
     if deployment is None:
         raise HTTPException(404, "unknown deployment")
+    check_access(auth, deployment.device)
     if deployment.status not in ("pending", "downloading", "rebooting"):
         # Cancelled or already finished: tells the device to abort.
         raise HTTPException(409, f"deployment is {deployment.status}")
@@ -180,7 +203,9 @@ def report_progress(deployment_id: int, body: ProgressIn, session: Session = Dep
 
 
 @router.get("/firmwares/{firmware_id}/download")
-def download_firmware(firmware_id: int, request: Request, session: Session = Depends(get_session)):
+def download_firmware(
+    firmware_id: int, request: Request, auth: DeviceAuth = Depends(authenticate), session: Session = Depends(get_session)
+):
     """The whole image, or its end with `Range: bytes=<offset>-` when a device resumes a stalled download."""
     fw = session.get(Firmware, firmware_id)
     if fw is None:

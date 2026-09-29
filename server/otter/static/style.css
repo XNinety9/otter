@@ -224,6 +224,12 @@ dialog#rollout-dialog::backdrop { background: rgb(0 0 0 / .45); }
 #user { font-size: 13px; }
 
 .chan-chip { font-size: 11px; padding: 0 7px; border-radius: 99px; color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); white-space: nowrap; }
+.access { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 13px; }
+.access-state.revoked { color: var(--err); font-weight: 600; }
+.access-state.awaiting_approval { color: var(--warn); font-weight: 600; }
+.auth-chip { font-size: 11px; padding: 0 7px; border-radius: 99px; white-space: nowrap; }
+.auth-chip.revoked { color: var(--err); background: color-mix(in srgb, var(--err) 12%, transparent); }
+.auth-chip.awaiting_approval { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .command-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .cmd-custom { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .cmd-custom input[name=name] { width: 140px; }
