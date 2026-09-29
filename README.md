@@ -41,6 +41,25 @@ Open http://localhost:8000.
 | `OTTER_FLEET_KEY`        | *(empty)*      | Shared secret devices send in `X-Otter-Key`              |
 | `OTTER_PUBLIC_URL`       | *(from request)* | Base URL put in download links, e.g. `http://10.0.0.5:8000` |
 
+## Run with Docker
+
+```sh
+docker compose up -d
+```
+
+The UI is on port 8000; the database and firmware images live in the `otter-data` volume.
+Settings (`OTTER_FLEET_KEY`, `OTTER_CHECKIN_INTERVAL`, `OTTER_PUBLIC_URL`) are read from the
+environment or a `.env` file next to `docker-compose.yml`.
+
+Prebuilt images for amd64 and arm64 (e.g. Raspberry Pi) are published from the `dev` branch:
+
+```sh
+docker run -d --name otter -p 8000:8000 -v otter-data:/data ghcr.io/xninety9/otter:dev
+```
+
+The container runs as UID 1000. With a bind mount instead of a volume, make sure that user can
+write to the directory. `GET /healthz` reports whether the server and its database are up.
+
 ## Try it without hardware
 
 ```sh

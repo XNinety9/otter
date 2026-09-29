@@ -143,3 +143,7 @@ def test_long_poll_wakes_up_on_deployment(client, checkin, upload):
 
     assert result["resp"]["update"]["version"] == "1.1.0"
     assert result["elapsed"] < 3
+
+
+def test_healthz(client):
+    assert client.get("/healthz").json() == {"status": "ok"}
