@@ -1,7 +1,8 @@
 # Otter device protocol (v1)
 
 This is the contract between a device agent (ESP-IDF component, Arduino library, simulator…)
-and the Otter server. Everything is plain HTTP + JSON; devices never need an open port.
+and the Otter server: JSON requests over HTTP(S), always initiated by the device, so devices
+never need an open port. **Use HTTPS**: see [Security](#security) for what plain HTTP exposes.
 
 All device endpoints live under `/api/v1`. If the server is configured with a fleet key
 (`OTTER_FLEET_KEY`), every device request must send it:
@@ -117,3 +118,28 @@ loop:
         restart
     sleep(max(0, resp.checkin_interval_s - (now() - t0)))
 ```
+
+## Security
+
+What protects what, and what doesn't yet:
+
+| Threat | Plain HTTP | HTTPS (server) | Status |
+|---|---|---|---|
+| Someone on the network reads the fleet key, device data, or dashboard passwords and cookies | **exposed** | protected | HTTPS: [#17](https://github.com/XNinety9/otter/issues/17) |
+| Someone on the network (e.g. ARP spoofing) serves a malicious firmware | **exposed**: `sha256` comes through the same channel, it only detects corruption | protected, **if the device verifies the certificate** | HTTPS: #17 |
+| The server itself, or its storage, is compromised and serves a malicious firmware | exposed | exposed | signed firmware: [#18](https://github.com/XNinety9/otter/issues/18) |
+| A device's key is extracted from its flash | the shared fleet key opens every device's API | same | per-device tokens: [#15](https://github.com/XNinety9/otter/issues/15) |
+
+Deployment options:
+
+- **Server**: run it behind a TLS reverse proxy. `docker-compose.https.yml` puts Caddy in front of
+  Otter, with Let's Encrypt for a public domain or Caddy's own CA on a LAN, and stops publishing
+  Otter's plain-HTTP port (see "HTTPS" in the README).
+- **ESP-IDF agent**: use an `https://` server URL and give the CA certificate in
+  `otter_config_t.cert_pem`. Without it, the ESP-IDF certificate bundle is used, which covers
+  public certificates such as Let's Encrypt but not a private CA. *Not yet validated on hardware.*
+- **Arduino library**: plain HTTP only for now (#17).
+
+Devices must verify the server's certificate: TLS without verification still lets anyone on
+the network impersonate the server.
+

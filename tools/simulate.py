@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import hashlib
 import random
+import ssl
 
 import httpx
 
@@ -126,9 +127,11 @@ async def main() -> None:
     parser.add_argument("--fail-rate", type=float, default=0.0, help="0..1, share of updates that fail")
     parser.add_argument("--key", help="fleet key (X-Otter-Key)")
     parser.add_argument("--no-long-poll", action="store_true", help="plain periodic check-ins")
+    parser.add_argument("--ca", help="CA certificate (PEM) to trust for an https:// server, e.g. Caddy's local CA")
     args = parser.parse_args()
 
-    async with httpx.AsyncClient(base_url=args.server, timeout=30) as client:
+    verify = ssl.create_default_context(cafile=args.ca) if args.ca else True
+    async with httpx.AsyncClient(base_url=args.server, timeout=30, verify=verify) as client:
         devices = [FakeDevice(n, args) for n in range(args.count)]
         await asyncio.gather(*(d.run(client) for d in devices))
 
