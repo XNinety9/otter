@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from . import config
 from .db import SessionLocal, get_session, utcnow
 from .events import broadcaster, wakeups
+from .metrics import CHECKINS, DOWNLOAD_BYTES, DOWNLOADS
 from .models import Deployment, Device, Firmware
 from .schemas import CheckinIn, CheckinOut, DeviceOut, ProgressIn, UpdateOrder
 from .storage import firmware_path
@@ -64,6 +65,7 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
         device.rssi = body.rssi
         device.uptime_s = body.uptime_s
         device.last_seen = utcnow()
+        CHECKINS.labels(body.app).inc()
 
         order = None
         if deployment := device.active_deployment:
@@ -112,6 +114,8 @@ def download_firmware(firmware_id: int, session: Session = Depends(get_session))
     fw = session.get(Firmware, firmware_id)
     if fw is None:
         raise HTTPException(404, "unknown firmware")
+    DOWNLOADS.labels(fw.app, fw.version).inc()
+    DOWNLOAD_BYTES.inc(fw.size)
     return FileResponse(
         firmware_path(fw.sha256),
         media_type="application/octet-stream",

@@ -2,13 +2,15 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
 
 from . import api_device, api_ui, config
 from .db import engine
 from .events import broadcaster, wakeups
+from .metrics import REGISTRY
 from .migrate import upgrade_database
 
 
@@ -30,6 +32,12 @@ def healthz():
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
     return {"status": "ok"}
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    """Prometheus scrape endpoint."""
+    return Response(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
 
 app.include_router(api_device.router)
