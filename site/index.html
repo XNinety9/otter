@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Otter · OTA updates for your ESP32 and ESP8266 fleet</title>
+  <meta name="description" content="Otter tracks your home-made ESP32 and ESP8266 devices and updates their firmware from one dashboard: live progress, staged rollouts, release channels and automatic rollback.">
+  <meta property="og:title" content="Otter · OTA updates for your ESP32 and ESP8266 fleet">
+  <meta property="og:description" content="Track your home-made devices and update their firmware from one dashboard.">
+  <meta property="og:image" content="assets/demo-poster.webp">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/logo-mark.png" alt="" width="30" height="30"> Otter</a>
+      <div class="links">
+        <a href="#features" class="hide-small">Features</a>
+        <a href="#how">How it works</a>
+        <a href="guide.html">Docs</a>
+        <a href="https://github.com/XNinety9/otter">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <header class="hero wrap">
+      <img class="logo" src="assets/logo.png" alt="Otter" width="200" height="200">
+      <h1>Over-the-air updates for your home-made ESP32 fleet</h1>
+      <p class="lead">Otter keeps track of your ESP32 and ESP8266 devices and updates their firmware from a single
+        dashboard, with live progress, staged rollouts, release channels and automatic rollback.</p>
+      <div class="cta">
+        <a class="button primary" href="#quick-start">Get started</a>
+        <a class="button" href="https://github.com/XNinety9/otter">View on GitHub</a>
+      </div>
+    </header>
+
+    <div class="wrap">
+      <figure class="demo" style="margin-bottom:0">
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i></div>
+        <video autoplay muted loop playsinline preload="metadata" poster="assets/demo-poster.webp"
+               aria-label="The Otter dashboard during a staged rollout: two canary devices update first, then the four others.">
+          <source src="assets/demo.webm" type="video/webm">
+          <source src="assets/demo.mp4" type="video/mp4">
+        </video>
+      </figure>
+      <p class="caption">A staged rollout to six weather stations: two canaries first, then the rest. Real time, recorded with the device simulator.</p>
+    </div>
+
+    <section class="block wrap" id="features">
+      <h2>Everything a small fleet needs</h2>
+      <p class="intro">Built for the dozen devices on your shelf, ready for the hundred it may become.</p>
+      <div class="grid">
+        <div class="card"><h3><span class="icon">📡</span> Live inventory</h3>
+          <p>Every device checks in with its MAC, IP, firmware version, signal and uptime. See who is online, search, filter and tag them.</p></div>
+        <div class="card"><h3><span class="icon">⚡</span> Updates start in a second</h3>
+          <p>Devices long-poll the server: a deployment reaches them within a second or two, and progress streams live to your browser.</p></div>
+        <div class="card"><h3><span class="icon">🛟</span> Safe by default</h3>
+          <p>SHA-256 checks, bootloader rollback on ESP-IDF, automatic retries after network drops, and devices that never need an open port.</p></div>
+        <div class="card"><h3><span class="icon">🪜</span> Staged rollouts</h3>
+          <p>Release to 10&nbsp;%, then 50&nbsp;%, then everyone. Too many failures and the rollout halts before touching the rest of the fleet.</p></div>
+        <div class="card"><h3><span class="icon">🛤️</span> Release channels</h3>
+          <p>Publish on <code>beta</code> or <code>stable</code> and let devices follow a channel: they update themselves, and never downgrade.</p></div>
+        <div class="card"><h3><span class="icon">🔔</span> Notifications</h3>
+          <p>Failed update, halted rollout, device offline or brand new: get told on ntfy, Discord or any webhook.</p></div>
+        <div class="card"><h3><span class="icon">📈</span> Metrics</h3>
+          <p>A Prometheus endpoint with fleet state and deployment outcomes, ready for your Grafana dashboards.</p></div>
+        <div class="card"><h3><span class="icon">🐳</span> Runs anywhere</h3>
+          <p>One Docker image for amd64 and arm64 (Raspberry Pi), SQLite inside. HTTPS with Caddy, accounts and API tokens included.</p></div>
+        <div class="card"><h3><span class="icon">🏷️</span> CI releases</h3>
+          <p>Push a tag like <code>weather/v1.6.0</code>: CI builds every hardware variant with that version and uploads it to Otter.</p></div>
+      </div>
+    </section>
+
+    <section class="block wrap" id="how">
+      <h2>How it works</h2>
+      <p class="intro">Devices always call the server, never the other way around: no open port, no NAT trouble, sleepy devices welcome.</p>
+      <div class="grid steps">
+        <div class="card"><h3>Add the agent</h3>
+          <p>Drop the ESP-IDF component or the Arduino library into your firmware and point it at your Otter server.</p></div>
+        <div class="card"><h3>Devices check in</h3>
+          <p>Each device reports its state and waits for orders. It shows up on the dashboard within seconds.</p></div>
+        <div class="card"><h3>Upload and deploy</h3>
+          <p>Upload a <code>.bin</code>, deploy it to a device, a tag, a channel or the whole fleet, and watch the progress bars fill.</p></div>
+      </div>
+    </section>
+
+    <section class="block wrap" id="hardware">
+      <h2>Hardware support</h2>
+      <p class="intro">The protocol is small JSON requests over HTTP(S), documented: other boards and languages can speak it too.</p>
+      <div class="table-scroll"><table class="support">
+        <thead><tr><th>Chip</th><th>Framework</th><th>OTA + rollback</th><th>Long polling</th></tr></thead>
+        <tbody>
+          <tr><td>ESP32 family (tested on ESP32-C6, builds for ESP32)</td><td>ESP-IDF component</td><td class="ok">✓ bootloader rollback</td><td class="ok">✓</td></tr>
+          <tr><td>ESP32</td><td>Arduino library</td><td class="ok">✓ image validation</td><td class="no">planned</td></tr>
+          <tr><td>ESP8266</td><td>Arduino library</td><td class="ok">✓ image validation</td><td class="no">periodic check-ins</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="block wrap" id="quick-start">
+      <h2>Quick start</h2>
+      <p class="intro">From nothing to a first over-the-air update in a few minutes.</p>
+      <div class="grid steps">
+        <div class="card"><h3>Start the server</h3>
+          <pre>git clone https://github.com/XNinety9/otter
+cd otter && docker compose up -d
+docker compose exec otter \
+  python -m otter.cli create-user admin</pre>
+          <p>Open <code>http://&lt;host&gt;:8000</code> and log in.</p></div>
+        <div class="card"><h3>Flash a device</h3>
+          <pre>export WIFI_SSID=… WIFI_PASS=…
+export OTTER_SERVER=http://&lt;host&gt;:8000
+cd firmware/examples/esp32-idf
+pio run -e esp32c6 -t upload</pre>
+          <p>It appears on the dashboard a few seconds later.</p></div>
+        <div class="card"><h3>Ship an update</h3>
+          <pre># token: python -m otter.cli create-token …
+export OTTER_TOKEN=otk_…
+tools/release.sh otter-demo 1.1.0</pre>
+          <p>It builds and uploads every hardware variant. Click <strong>Roll out</strong> and watch it update.</p></div>
+      </div>
+      <p class="caption">No hardware yet? <code>tools/simulate.py</code> spins up a fleet of fake devices that speak the real protocol.</p>
+    </section>
+
+    <section class="block wrap" id="security">
+      <h2>Security, honestly</h2>
+      <p class="intro">Accounts, API tokens, HTTPS with Caddy and hashed secrets are there today. On the roadmap:
+        per-device tokens and signed firmware, so that even a compromised server can't push an image you didn't sign.</p>
+      <p class="note">Over plain HTTP, anyone on your network could read passwords and serve a malicious firmware.
+        Put Otter behind HTTPS before it leaves your desk: <a href="guide.html#https">the guide shows how</a>, and the
+        <a href="protocol.html#security">protocol's security section</a> says exactly what is protected.</p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/logo-mark.png" alt="" width="24" height="24"> Otter</a>
+      <span>Open source on <a href="https://github.com/XNinety9/otter">GitHub</a></span>
+      <a href="guide.html">Guide</a>
+      <a href="protocol.html">Device protocol</a>
+      <a href="https://github.com/XNinety9/otter/issues">Roadmap</a>
+    </div>
+  </footer>
+</body>
+</html>

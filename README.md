@@ -8,6 +8,8 @@
 
 Fleet tracking and centralized OTA updates for home-made ESP32 / ESP8266 devices.
 
+**Website and docs: [xninety9.github.io/otter](https://xninety9.github.io/otter)**
+
 - **Inventory**: every device checks in periodically with its MAC, IP, firmware version,
   signal strength and uptime. The dashboard shows who is online and when each device was last seen.
 - **Firmware registry**: upload `.bin` images, versioned per application and hardware family.
@@ -32,8 +34,10 @@ The contract between devices and server is described in [docs/protocol.md](docs/
 
 ```
 server/        FastAPI + SQLite backend, serves the web UI (server/otter/static)
-tools/         simulate.py: a swarm of fake devices speaking the protocol
-docs/          protocol spec
+tools/         simulate.py (fake devices), push.sh (upload), release.sh (build and publish), make_logos.py
+docs/          protocol spec, logo artwork
+site/          website (GitHub Pages): landing page, demo capture, docs built from this README
+deploy/        Caddyfile for docker-compose.https.yml
 firmware/
   components/otter/   ESP-IDF component (ESP32 family, with bootloader rollback)
   arduino/Otter/      Arduino library (ESP8266 and ESP32)
@@ -97,13 +101,14 @@ OTTER_DOMAIN=otter.example.com OTTER_TLS=you@example.com \
   `/etc/hosts`…).
 - With Caddy's local CA, browsers and devices must trust its root certificate:
 
-  ```sh
-  docker compose -f docker-compose.yml -f docker-compose.https.yml \
-    cp caddy:/data/caddy/pki/authorities/local/root.crt otter-ca.pem
-  ```
+    ```sh
+    docker compose -f docker-compose.yml -f docker-compose.https.yml \
+      cp caddy:/data/caddy/pki/authorities/local/root.crt otter-ca.pem
+    ```
 
-  Import `otter-ca.pem` in your browser or system trust store, and give it to the devices
-  (`cert_pem` of the ESP-IDF agent). The simulator takes it with `--ca otter-ca.pem`.
+    Import `otter-ca.pem` in your browser or system trust store, and give it to the devices
+    (`cert_pem` of the ESP-IDF agent). The simulator takes it with `--ca otter-ca.pem`.
+
 - Without Docker, any TLS reverse proxy works. Uvicorn only trusts `X-Forwarded-*` headers from
   `127.0.0.1` by default; if the proxy runs elsewhere, set `FORWARDED_ALLOW_IPS` to its address,
   and never expose Otter's port directly when you do.
