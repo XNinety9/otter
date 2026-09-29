@@ -1,5 +1,7 @@
 # 🦦 Otter
 
+[![CI](https://github.com/XNinety9/otter/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/XNinety9/otter/actions/workflows/ci.yml)
+
 Fleet tracking and centralized OTA updates for home-made ESP32 / ESP8266 devices.
 
 - **Inventory**: every device checks in periodically with its MAC, IP, firmware version,
