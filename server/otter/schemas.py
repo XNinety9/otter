@@ -71,6 +71,8 @@ class ProgressIn(BaseModel):
     state: Literal["downloading", "rebooting", "failed"]
     progress: int = Field(default=0, ge=0, le=100)
     error: str | None = Field(default=None, max_length=200)
+    # For failures: whether trying again may succeed. Omitted = guessed from `error`.
+    retryable: bool | None = None
 
 
 # --- UI API ----------------------------------------------------------------
@@ -102,6 +104,7 @@ class DeploymentOut(BaseModel):
     updated_at: UtcDatetime
     rollout_id: int | None = None
     stage: int | None = None
+    attempts: int = 1
 
 
 class DeviceOut(BaseModel):

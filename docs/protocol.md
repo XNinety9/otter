@@ -86,6 +86,13 @@ Content-Type: application/json
 | `rebooting`   | image written and verified, device is about to restart           |
 | `failed`      | update aborted; include `"error": "<short reason>"`              |
 
+With `failed`, a device may add `"retryable": true|false` to say whether a new attempt could
+succeed. Without it, the server guesses from `error`: network problems (`connection lost`,
+`download timeout`, `cannot reach…`) are retried, anything else (`sha256 mismatch`, image
+validation, not enough space…) is final. A retried deployment goes back to pending and is handed
+out again at a later check-in, after 10 s, 20 s… (`OTTER_RETRY_DELAY`), up to
+`OTTER_DEPLOY_ATTEMPTS` attempts (default 3).
+
 `progress` is 0–100. A `409 Conflict` answer means the deployment was cancelled (or
 superseded) from the UI: the device should abort the update and keep running its current
 image. There is no `success` state sent by the device: the update is

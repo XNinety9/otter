@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api", tags=["ui"], dependencies=[Depends(require_use
 
 @router.get("/config")
 def get_config():
-    return {"checkin_interval_s": config.CHECKIN_INTERVAL_S}
+    return {"checkin_interval_s": config.CHECKIN_INTERVAL_S, "deploy_attempts": config.DEPLOY_ATTEMPTS}
 
 
 @router.get("/notifications")

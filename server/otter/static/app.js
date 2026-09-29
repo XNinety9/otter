@@ -6,6 +6,7 @@ const state = {
   selected: new Set(),
   rollouts: [],
   interval: 30,
+  maxAttempts: 3,
   filter: { q: "", show: "all", tag: "" },
 };
 
@@ -120,8 +121,14 @@ function updateStatusText(d) {
   if (!dep) return "";
   const v = dep.firmware.version;
   switch (dep.status) {
-    case "pending": return `waiting for check-in → ${v}`;
-    case "downloading": return `downloading ${v} · ${dep.progress}%`;
+    case "pending":
+      return dep.attempts > 1
+        ? `retry ${dep.attempts}/${state.maxAttempts} of ${v} soon · ${dep.error}`
+        : `waiting for check-in → ${v}`;
+    case "downloading": {
+      const attempt = dep.attempts > 1 ? ` · attempt ${dep.attempts}/${state.maxAttempts}` : "";
+      return `downloading ${v} · ${dep.progress}%${attempt}`;
+    }
     case "rebooting": return `rebooting into ${v}…`;
     case "success": return `✓ updated to ${v} · ${ago(dep.updated_at)}`;
     case "failed": return `✗ ${v} failed: ${dep.error || "unknown error"}`;
@@ -723,6 +730,7 @@ async function resync() {
   state.rollouts = rollouts;
   renderRollouts();
   state.interval = cfg.checkin_interval_s;
+  state.maxAttempts = cfg.deploy_attempts;
   state.devices = new Map(devices.map((d) => [d.id, d]));
   for (const id of state.selected) if (!state.devices.has(id)) state.selected.delete(id);
   state.firmwares = firmwares;

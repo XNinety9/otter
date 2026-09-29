@@ -86,6 +86,8 @@ class FakeDevice:
         received = last_reported = 0
         speed = random.uniform(0.6, 1.4) * self.args.duration
 
+        # Simulated network drop somewhere in the download (--net-fail-rate).
+        drop_at = random.uniform(0.1, 0.9) if random.random() < self.args.net_fail_rate else None
         async with client.stream("GET", order["url"], headers=self.headers) as res:
             res.raise_for_status()
             if not await self.report(client, dep, "downloading", 0):
@@ -96,6 +98,9 @@ class FakeDevice:
                 pct = received * 100 // order["size"]
                 # Pace the transfer so a whole download takes ~--duration seconds.
                 await asyncio.sleep(speed * len(chunk) / order["size"])
+                if drop_at is not None and received >= drop_at * order["size"]:
+                    await self.report(client, dep, "failed", pct, error="connection lost")
+                    return self.log(f"simulated network drop at {pct}%")
                 if pct - last_reported >= 5:
                     last_reported = pct
                     if not await self.report(client, dep, "downloading", pct):
@@ -125,6 +130,8 @@ async def main() -> None:
     parser.add_argument("--interval", type=float, help="override the server's check-in interval")
     parser.add_argument("--duration", type=float, default=15, help="approx. seconds per download")
     parser.add_argument("--fail-rate", type=float, default=0.0, help="0..1, share of updates that fail")
+    parser.add_argument("--net-fail-rate", type=float, default=0.0,
+                        help="0..1, share of downloads cut by a (retryable) network error")
     parser.add_argument("--key", help="fleet key (X-Otter-Key)")
     parser.add_argument("--no-long-poll", action="store_true", help="plain periodic check-ins")
     parser.add_argument("--ca", help="CA certificate (PEM) to trust for an https:// server, e.g. Caddy's local CA")

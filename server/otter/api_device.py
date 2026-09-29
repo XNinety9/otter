@@ -2,6 +2,7 @@
 
 import asyncio
 import secrets
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -30,6 +31,16 @@ def require_fleet_key(request: Request) -> None:
 
 # Longest a check-in may be held open (long polling).
 MAX_WAIT_S = 60
+
+# Failures a new attempt may fix, as reported by the agents (ESP-IDF, Arduino, simulator).
+TRANSIENT_ERRORS = ("connection lost", "download timeout", "cannot reach", "download refused", "out of memory")
+
+
+def is_transient(error: str | None, retryable: bool | None) -> bool:
+    if retryable is not None:
+        return retryable
+    return any(marker in (error or "").lower() for marker in TRANSIENT_ERRORS)
+
 
 router = APIRouter(prefix="/api/v1", tags=["device"], dependencies=[Depends(require_fleet_key)])
 
@@ -79,6 +90,8 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
                 deployment.status = "failed"
                 deployment.error = f"came back running {body.fw_version} (rollback?)"
                 failed = deployment
+            elif deployment.retry_at and deployment.retry_at > utcnow():
+                pass  # a retry, not due yet
             else:
                 # pending, or an interrupted download: (re)send the order.
                 base = config.PUBLIC_URL or str(request.base_url).rstrip("/")
@@ -110,14 +123,27 @@ def report_progress(deployment_id: int, body: ProgressIn, session: Session = Dep
         # Cancelled or already finished: tells the device to abort.
         raise HTTPException(409, f"deployment is {deployment.status}")
 
-    deployment.status = body.state
-    deployment.progress = 100 if body.state == "rebooting" else body.progress
-    deployment.error = body.error if body.state == "failed" else None
+    if body.state == "failed" and deployment.attempts < config.DEPLOY_ATTEMPTS and is_transient(
+        body.error, body.retryable
+    ):
+        # Hand it out again a bit later: the device gets it back at a later check-in.
+        deployment.status, deployment.progress = "pending", 0
+        deployment.error = f"attempt {deployment.attempts} failed: {body.error or 'unknown error'}"
+        deployment.retry_at = utcnow() + timedelta(seconds=config.RETRY_DELAY_S * deployment.attempts)
+        deployment.attempts += 1
+    elif body.state == "failed":
+        deployment.status, deployment.progress = "failed", 0
+        suffix = f" (attempt {deployment.attempts}/{config.DEPLOY_ATTEMPTS})" if deployment.attempts > 1 else ""
+        deployment.error = (body.error or "unknown error") + suffix
+    else:
+        deployment.status = body.state
+        deployment.progress = 100 if body.state == "rebooting" else body.progress
+        deployment.error = None
     deployment.device.last_seen = utcnow()
     session.commit()
     publish_device(deployment.device)
     notifier.device_seen(deployment.device_id)
-    if body.state == "failed":
+    if deployment.status == "failed":  # final failures only, not the ones being retried
         notifier.emit("deployment_failed", deployment_id=deployment.id)
     return {"ok": True}
 
