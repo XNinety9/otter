@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Server tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - run: uv sync --locked
+      - run: uv run pytest
+
+  firmware:
+    name: Firmware ${{ matrix.project }} / ${{ matrix.env }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { project: esp32-idf, env: esp32 }
+          - { project: esp32-idf, env: esp32c6 }
+          - { project: arduino, env: esp8266 }
+          - { project: arduino, env: esp32 }
+    env:
+      # Placeholders: the build only needs them to exist.
+      WIFI_SSID: ci
+      WIFI_PASS: ci-password
+      OTTER_SERVER: http://otter.invalid:8000
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      # Platforms, toolchains and ESP-IDF weigh hundreds of MB: keep them between runs.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.platformio
+          key: pio-${{ matrix.project }}-${{ matrix.env }}-${{ hashFiles(format('firmware/examples/{0}/platformio.ini', matrix.project), format('firmware/examples/{0}/dependencies.lock', matrix.project)) }}
+          restore-keys: pio-${{ matrix.project }}-${{ matrix.env }}-
+      - run: pip install platformio
+      - run: pio run -d firmware/examples/${{ matrix.project }} -e ${{ matrix.env }}
