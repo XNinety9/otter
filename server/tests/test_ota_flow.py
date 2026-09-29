@@ -160,3 +160,7 @@ def test_device_deployment_history(client, checkin, upload):
     ]
     assert history[1]["error"] == "superseded"
     assert client.get("/api/devices/999/deployments").status_code == 404
+
+
+def test_healthz(client):
+    assert client.get("/healthz").json() == {"status": "ok"}
