@@ -100,6 +100,8 @@ class DeploymentOut(BaseModel):
     firmware: FirmwareOut
     created_at: UtcDatetime
     updated_at: UtcDatetime
+    rollout_id: int | None = None
+    stage: int | None = None
 
 
 class DeviceOut(BaseModel):
@@ -144,3 +146,42 @@ class DeployIn(BaseModel):
         if not self.device_ids and not self.tags:
             raise ValueError("give device_ids and/or tags")
         return self
+
+
+class RolloutIn(BaseModel):
+    firmware_id: int
+    tags: list[TagName] = []
+    stages: list[int] = Field(default=[10, 50, 100], min_length=1, max_length=10)
+    soak_s: int = Field(default=300, ge=0, le=7 * 86400)
+    max_failure_rate: float = Field(default=0.2, ge=0, le=1)
+
+    @field_validator("stages")
+    @classmethod
+    def check_stages(cls, stages: list[int]) -> list[int]:
+        if any(not 1 <= s <= 100 for s in stages) or stages != sorted(set(stages)) or stages[-1] != 100:
+            raise ValueError("stages are increasing percentages ending with 100, e.g. [10, 50, 100]")
+        return stages
+
+
+class RolloutStageOut(BaseModel):
+    size: int
+    success: int
+    failed: int
+    cancelled: int
+    active: int
+    queued: int
+
+
+class RolloutOut(BaseModel):
+    id: int
+    firmware: FirmwareOut
+    tags: list[str]
+    stages: list[RolloutStageOut]
+    current_stage: int
+    status: str
+    message: str | None
+    soak_s: int
+    max_failure_rate: float
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
+    next_stage_at: UtcDatetime | None

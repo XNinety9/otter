@@ -1,17 +1,31 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
 
-from . import api_device, api_ui, config
+from . import api_device, api_rollouts, api_ui, config
 from .db import engine
 from .events import broadcaster, wakeups
 from .metrics import REGISTRY
 from .migrate import upgrade_database
+
+
+log = logging.getLogger("otter")
+
+
+async def evaluate_rollouts_forever() -> None:
+    while True:
+        await asyncio.sleep(config.ROLLOUT_TICK_S)
+        try:
+            await run_in_threadpool(api_rollouts.evaluate_now)
+        except Exception:
+            log.exception("rollout evaluation failed")
 
 
 @asynccontextmanager
@@ -20,7 +34,10 @@ async def lifespan(_: FastAPI):
     upgrade_database()
     broadcaster.bind(asyncio.get_running_loop())
     wakeups.bind(asyncio.get_running_loop())
+    evaluator = asyncio.create_task(evaluate_rollouts_forever()) if config.ROLLOUT_TICK_S > 0 else None
     yield
+    if evaluator:
+        evaluator.cancel()
 
 
 app = FastAPI(title="Otter", lifespan=lifespan)
@@ -42,4 +59,5 @@ def metrics():
 
 app.include_router(api_device.router)
 app.include_router(api_ui.router)
+app.include_router(api_rollouts.router)
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")

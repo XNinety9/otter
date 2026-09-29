@@ -176,6 +176,40 @@ h3 { margin: 20px 0 8px; font-size: 14px; }
 .badge.failed { color: var(--err); }
 .badge.pending, .badge.downloading, .badge.rebooting { color: var(--accent); }
 
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+#rollouts { display: grid; gap: 12px; }
+#rollouts:empty { display: none; }
+.rollout { padding: 14px 16px; }
+.rollout-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.rollout-head .title { font-weight: 600; }
+.rollout-head .toolbar { margin-left: auto; }
+.rollout .message { margin: 8px 0 0; color: var(--err); }
+.rollout .meta { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+.stage { font-size: 12px; color: var(--muted); }
+.stage.current { color: var(--text); }
+.stage .label { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.segments { display: flex; height: 8px; border-radius: 99px; overflow: hidden; background: var(--track); }
+.stage.current .segments { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px; }
+.segments i { display: block; height: 100%; }
+.segments .success { background: var(--ok); }
+.segments .failed { background: var(--err); }
+.segments .active { background: var(--accent); }
+.segments .cancelled { background: var(--muted); opacity: .5; }
+.badge.running { color: var(--accent); }
+.badge.halted, .badge.aborted { color: var(--err); }
+.badge.completed { color: var(--ok); }
+.badge.paused, .badge.queued { color: var(--warn); }
+dialog#rollout-dialog { width: min(560px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text); }
+dialog#rollout-dialog::backdrop { background: rgb(0 0 0 / .45); }
+.rollout-form h2 { margin-bottom: 6px; }
+.rollout-form p { margin: 0 0 14px; font-size: 13px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.form-grid label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.rollout-form .preview { color: var(--text); }
+.toolbar.end { justify-content: flex-end; }
+@media (max-width: 480px) { .form-grid { grid-template-columns: 1fr; } }
+
 #toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 10; }
 .toast { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / .15); max-width: 380px; }
 .toast.ok { border-left-color: var(--ok); }

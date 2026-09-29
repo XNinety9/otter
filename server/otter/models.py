@@ -5,7 +5,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base, utcnow
 
+# queued: waiting for a later stage of a rollout, invisible to the device.
 ACTIVE_STATES = ("pending", "downloading", "rebooting")
+OPEN_STATES = ("queued", *ACTIVE_STATES)
 FINAL_STATES = ("success", "failed", "cancelled")
 
 
@@ -81,5 +83,31 @@ class Deployment(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
+    rollout_id: Mapped[int | None] = mapped_column(ForeignKey("rollouts.id", ondelete="SET NULL"))
+    stage: Mapped[int | None]  # index of the rollout stage this deployment belongs to
+
     device: Mapped[Device] = relationship(back_populates="deployments")
     firmware: Mapped[Firmware] = relationship(lazy="joined")
+    rollout: Mapped["Rollout | None"] = relationship(back_populates="deployments")
+
+
+class Rollout(Base):
+    """A firmware released in stages: each stage starts once the previous one succeeded."""
+
+    __tablename__ = "rollouts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    firmware_id: Mapped[int] = mapped_column(ForeignKey("firmwares.id", ondelete="CASCADE"))
+    tags: Mapped[str]  # comma-separated, empty = every device of the app and hardware
+    stages: Mapped[str]  # JSON list of cumulative percentages, e.g. [10, 50, 100]
+    soak_s: Mapped[int]
+    max_failure_rate: Mapped[float]
+    status: Mapped[str] = mapped_column(default="running")  # running, paused, halted, completed, aborted
+    current_stage: Mapped[int] = mapped_column(default=0)
+    stage_done_at: Mapped[datetime | None]  # when the current stage finished (soak start)
+    message: Mapped[str | None]
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    firmware: Mapped[Firmware] = relationship(lazy="joined")
+    deployments: Mapped[list[Deployment]] = relationship(back_populates="rollout", order_by=Deployment.id)

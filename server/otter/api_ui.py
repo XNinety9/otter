@@ -12,7 +12,8 @@ from . import config
 from .api_device import publish_device
 from .db import get_session
 from .events import broadcaster, wakeups
-from .models import ACTIVE_STATES, Deployment, Device, Firmware, Tag, device_tags
+from .models import OPEN_STATES, Deployment, Device, Firmware, Tag, device_tags
+from .rollouts import cancel_open_deployments
 from .schemas import DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, TagOut
 from .storage import delete_firmware_file, store_firmware
 
@@ -129,7 +130,7 @@ def upload_firmware(
 def delete_firmware(firmware_id: int, session: Session = Depends(get_session)):
     fw = session.get(Firmware, firmware_id) or _404("firmware")
     in_use = session.scalar(
-        select(Deployment.id).where(Deployment.firmware_id == fw.id, Deployment.status.in_(ACTIVE_STATES))
+        select(Deployment.id).where(Deployment.firmware_id == fw.id, Deployment.status.in_(OPEN_STATES))
     )
     if in_use:
         raise HTTPException(409, "firmware is being deployed")
@@ -174,8 +175,8 @@ def create_deployments(body: DeployIn, session: Session = Depends(get_session)):
         devices += [d for d in outdated if d not in devices]
 
     for device in devices:
-        if previous := device.active_deployment:
-            previous.status, previous.error = "cancelled", "superseded"
+        # Also drops a queued rollout deployment, which would otherwise override this one later.
+        cancel_open_deployments(device, "superseded")
         device.deployments.append(Deployment(firmware=fw))
     session.commit()
     for device in devices:
@@ -187,7 +188,7 @@ def create_deployments(body: DeployIn, session: Session = Depends(get_session)):
 @router.post("/deployments/{deployment_id}/cancel", response_model=DeviceOut)
 def cancel_deployment(deployment_id: int, session: Session = Depends(get_session)):
     deployment = session.get(Deployment, deployment_id) or _404("deployment")
-    if deployment.status not in ACTIVE_STATES:
+    if deployment.status not in OPEN_STATES:
         raise HTTPException(409, f"deployment is already {deployment.status}")
     deployment.status = "cancelled"
     session.commit()
