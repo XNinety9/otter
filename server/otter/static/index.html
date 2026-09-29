@@ -70,6 +70,29 @@
     </section>
   </main>
 
+  <dialog id="device-panel" aria-labelledby="panel-title">
+    <div class="panel-head">
+      <div>
+        <h2 id="panel-title"></h2>
+        <div class="panel-sub mono muted"></div>
+      </div>
+      <div class="toolbar">
+        <button class="rename ghost">Rename</button>
+        <button class="forget ghost danger">Forget</button>
+        <button class="close ghost" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <dl class="info"></dl>
+    <h3>Deployment history</h3>
+    <div class="table-wrap">
+      <table class="history">
+        <thead><tr><th>Version</th><th>Status</th><th>Started</th><th>Duration</th><th>Details</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="empty history-empty">No deployment yet.</p>
+    </div>
+  </dialog>
+
   <div id="toasts" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>

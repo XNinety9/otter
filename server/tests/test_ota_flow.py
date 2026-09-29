@@ -143,3 +143,20 @@ def test_long_poll_wakes_up_on_deployment(client, checkin, upload):
 
     assert result["resp"]["update"]["version"] == "1.1.0"
     assert result["elapsed"] < 3
+
+
+def test_device_deployment_history(client, checkin, upload):
+    checkin()
+    fw1, fw2 = upload("1.1.0"), upload("1.2.0")
+    dev = device_id(client)
+    client.post("/api/deployments", json={"firmware_id": fw1["id"], "device_ids": [dev]})
+    client.post("/api/deployments", json={"firmware_id": fw2["id"], "device_ids": [dev]})
+    checkin("1.2.0")
+
+    history = client.get(f"/api/devices/{dev}/deployments").json()
+    assert [(d["firmware"]["version"], d["status"]) for d in history] == [
+        ("1.2.0", "success"),
+        ("1.1.0", "cancelled"),
+    ]
+    assert history[1]["error"] == "superseded"
+    assert client.get("/api/devices/999/deployments").status_code == 404
