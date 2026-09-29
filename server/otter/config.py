@@ -27,5 +27,12 @@ NOTIFY_URLS = os.environ.get("OTTER_NOTIFY_URLS", "")
 # Alert when a device hasn't checked in for this long (0 = never).
 NOTIFY_OFFLINE_MINUTES = float(os.environ.get("OTTER_NOTIFY_OFFLINE_MINUTES", "10"))
 
+# Home Assistant over MQTT discovery (see otter/mqtt.py). Empty URL = off.
+MQTT_URL = os.environ.get("OTTER_MQTT_URL", "")  # mqtt://user:password@host:1883, or mqtts://
+MQTT_DISCOVERY_PREFIX = os.environ.get("OTTER_MQTT_DISCOVERY_PREFIX", "homeassistant")
+MQTT_BASE_TOPIC = os.environ.get("OTTER_MQTT_BASE_TOPIC", "otter")
+# Let Home Assistant's "Install" button deploy firmware. Anyone who can publish on the broker could.
+MQTT_INSTALL = os.environ.get("OTTER_MQTT_INSTALL", "").lower() in ("1", "true", "yes")
+
 # How often staged rollouts are evaluated, in seconds (0 = never, for tests).
 ROLLOUT_TICK_S = float(os.environ.get("OTTER_ROLLOUT_TICK", "5"))
