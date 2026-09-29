@@ -5,7 +5,7 @@ const state = {
   firmwares: [],
   selected: new Set(),
   interval: 30,
-  filter: { q: "", show: "all" },
+  filter: { q: "", show: "all", tag: "" },
 };
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -26,7 +26,7 @@ async function api(method, path, body) {
     let msg = `${res.status} ${res.statusText}`;
     try {
       const { detail } = await res.json();
-      msg = typeof detail === "string" ? detail : detail.map((d) => d.msg).join(", ");
+      msg = typeof detail === "string" ? detail : detail.map((d) => d.msg.replace(/^Value error, /, "")).join(", ");
     } catch {}
     throw new Error(msg);
   }
@@ -68,7 +68,7 @@ function createRow(id) {
   tr.dataset.id = id;
   tr.innerHTML = `
     <td class="check"><input type="checkbox" class="sel" aria-label="Select"></td>
-    <td><button class="name link" title="Details and history"></button><div class="mac mono muted"></div></td>
+    <td><button class="name link" title="Details and history"></button><div class="mac mono muted"></div><div class="row-tags"></div></td>
     <td><span class="app"></span> <span class="hw tag"></span></td>
     <td class="fw mono"></td>
     <td class="ip mono"></td>
@@ -127,6 +127,7 @@ function updateRow(tr, d) {
   $(".sel", tr).checked = state.selected.has(d.id);
   $(".name", tr).textContent = label(d);
   $(".mac", tr).textContent = d.name ? d.mac : "";
+  $(".row-tags", tr).innerHTML = d.tags.map((t) => `<span class="tag-chip">#${esc(t)}</span>`).join("");
   $(".app", tr).textContent = d.app;
   $(".hw", tr).textContent = d.hw;
   $(".fw", tr).innerHTML = active
@@ -142,7 +143,19 @@ function updateRow(tr, d) {
   const cell = $(".update", tr);
   cell.className = `update${dep ? ` st-${dep.status}` : ""}`;
   $(".bar", cell).hidden = !(active || dep?.status === "success");
-  $(".fill", cell).style.width = `${dep ? dep.progress : 0}%`;
+  const fill = $(".fill", cell);
+  // The pending bar is full-width stripes: leaving it, like starting a new deployment,
+  // must jump to the real progress instead of animating backwards.
+  const barKey = dep ? `${dep.id}:${dep.status === "pending"}` : "";
+  if (fill.dataset.key !== barKey) {
+    fill.dataset.key = barKey;
+    fill.style.transition = "none";
+    fill.style.width = `${dep ? dep.progress : 0}%`;
+    void fill.offsetWidth;  // apply the jump before re-enabling transitions
+    fill.style.transition = "";
+  } else {
+    fill.style.width = `${dep ? dep.progress : 0}%`;
+  }
   $(".ustate", cell).textContent = updateStatusText(d);
   $(".cancel", tr).hidden = !active;
 
@@ -195,14 +208,39 @@ const FILTERS = {
 
 function matchesSearch(d, q) {
   if (!q) return true;
-  return [d.name, d.mac, d.ip, d.app, d.hw, d.fw_version].some((v) => v && v.toLowerCase().includes(q));
+  return [d.name, d.mac, d.ip, d.app, d.hw, d.fw_version, ...d.tags].some((v) => v && v.toLowerCase().includes(q));
+}
+
+const matchesTag = (d) => !state.filter.tag || d.tags.includes(state.filter.tag);
+
+// Devices matching the search box and the tag, before the status chips.
+function searchedDevices() {
+  const q = state.filter.q.trim().toLowerCase();
+  return sortedDevices().filter((d) => matchesSearch(d, q) && matchesTag(d));
 }
 
 function visibleDevices() {
   const latest = latestVersions();
-  const q = state.filter.q.trim().toLowerCase();
   const test = FILTERS[state.filter.show].test;
-  return sortedDevices().filter((d) => matchesSearch(d, q) && test(d, latest));
+  return searchedDevices().filter((d) => test(d, latest));
+}
+
+// Tags in use, with their device counts.
+function tagCounts() {
+  const counts = new Map();
+  for (const d of state.devices.values()) for (const t of d.tags) counts.set(t, (counts.get(t) || 0) + 1);
+  return new Map([...counts].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+function renderTagFilter() {
+  const counts = tagCounts();
+  const select = $("#tag-filter");
+  select.innerHTML = `<option value="">All tags</option>` +
+    [...counts].map(([t, n]) => `<option value="${esc(t)}">#${esc(t)} (${n})</option>`).join("") +
+    // Keep a tag from the URL selectable even if no device carries it (yet).
+    (state.filter.tag && !counts.has(state.filter.tag) ? `<option value="${esc(state.filter.tag)}">#${esc(state.filter.tag)} (0)</option>` : "");
+  select.value = state.filter.tag;
+  $("#known-tags").innerHTML = [...counts.keys()].map((t) => `<option value="${esc(t)}">`).join("");
 }
 
 // Deploy only ever targets devices that are both selected and visible.
@@ -212,8 +250,8 @@ function visibleSelected() {
 
 function renderFilters() {
   const latest = latestVersions();
-  const q = state.filter.q.trim().toLowerCase();
-  const searched = sortedDevices().filter((d) => matchesSearch(d, q));
+  const searched = searchedDevices();
+  renderTagFilter();
   $(".chips").innerHTML = Object.entries(FILTERS).map(([key, f]) => `
     <button class="chip" data-show="${key}" aria-pressed="${state.filter.show === key}">
       ${f.label}<span class="n">${searched.filter((d) => f.test(d, latest)).length}</span>
@@ -225,9 +263,11 @@ function setFilter(change) {
   const params = new URLSearchParams();
   if (state.filter.q) params.set("q", state.filter.q);
   if (state.filter.show !== "all") params.set("show", state.filter.show);
+  if (state.filter.tag) params.set("tag", state.filter.tag);
   const query = params.toString();
   history.replaceState(null, "", query ? `?${query}` : location.pathname);
   renderDevices();
+  renderFirmwares();  // "Roll out" follows the tag filter
   renderToolbar();
 }
 
@@ -236,8 +276,11 @@ function loadFilterFromUrl() {
   const show = params.get("show");
   state.filter.q = params.get("q") || "";
   state.filter.show = Object.hasOwn(FILTERS, show ?? "") ? show : "all";
+  state.filter.tag = (params.get("tag") || "").toLowerCase();
   $("#search").value = state.filter.q;
 }
+
+$("#tag-filter").addEventListener("change", (e) => setFilter({ tag: e.target.value }));
 
 $("#search").addEventListener("input", (e) => setFilter({ q: e.target.value }));
 $(".chips").addEventListener("click", (e) => {
@@ -246,7 +289,7 @@ $(".chips").addEventListener("click", (e) => {
 });
 $(".clear-filters").addEventListener("click", () => {
   $("#search").value = "";
-  setFilter({ q: "", show: "all" });
+  setFilter({ q: "", show: "all", tag: "" });
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "/" && !e.target.closest("input, textarea, select, dialog")) {
@@ -303,12 +346,12 @@ function renderToolbar() {
   btn.textContent = selected.length ? `Deploy to ${selected.length}` : "Deploy";
 }
 
-async function deploy(firmwareId, deviceIds) {
+async function deploy(firmwareId, targets, n, tag = "") {
   const fw = state.firmwares.find((f) => f.id === firmwareId);
-  const n = deviceIds.length;
-  if (!confirm(`Deploy ${fw.app} ${fw.version} to ${n} device${n === 1 ? "" : "s"}?`)) return;
+  const where = tag ? ` tagged #${tag}` : "";
+  if (!confirm(`Deploy ${fw.app} ${fw.version} to ${n} device${n === 1 ? "" : "s"}${where}?`)) return;
   try {
-    await api("POST", "/api/deployments", { firmware_id: firmwareId, device_ids: deviceIds });
+    await api("POST", "/api/deployments", { firmware_id: firmwareId, ...targets });
     state.selected.clear();
     renderDevices();
     renderToolbar();
@@ -360,6 +403,8 @@ function renderPanel() {
     ["Last seen", `${ago(d.last_seen)} · ${isOnline(d) ? "online" : "offline"}`],
     ["First seen", new Date(d.first_seen).toLocaleString()],
   ];
+  $(".tag-list", panel).innerHTML = d.tags.map((t) => `
+    <span class="tag-chip">#${esc(t)}<button data-tag="${esc(t)}" aria-label="Remove tag ${esc(t)}">×</button></span>`).join("");
   $(".info", panel).innerHTML = info.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
 
   // Refetch the history only when the latest deployment changes state.
@@ -393,6 +438,31 @@ async function loadHistory(id) {
 $(".close", panel).addEventListener("click", () => panel.close());
 $(".rename", panel).addEventListener("click", () => renameDevice(panelDeviceId));
 $(".forget", panel).addEventListener("click", () => forgetDevice(panelDeviceId));
+
+async function setTags(id, tags) {
+  try {
+    await api("PATCH", `/api/devices/${id}`, { tags });
+    return true;
+  } catch (e) {
+    toast(e.message, "err");
+    return false;
+  }
+}
+
+$(".tag-add", panel).addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = e.target.tag;
+  const tag = input.value.trim();
+  if (!tag) return;
+  const d = state.devices.get(panelDeviceId);
+  if (await setTags(d.id, [...d.tags, tag])) input.value = "";
+});
+$(".tag-list", panel).addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-tag]");
+  if (!button) return;
+  const d = state.devices.get(panelDeviceId);
+  setTags(d.id, d.tags.filter((t) => t !== button.dataset.tag));
+});
 panel.addEventListener("click", (e) => {
   // Clicks on the backdrop land on the dialog itself, outside its box.
   const r = panel.getBoundingClientRect();
@@ -416,7 +486,7 @@ function renderFirmwares() {
       <td title="${esc(new Date(f.uploaded_at).toLocaleString())}">${ago(f.uploaded_at)}</td>
       <td class="muted">${esc(f.notes)}</td>
       <td class="actions">
-        <button class="rollout ghost" title="Deploy to every ${esc(f.app)} / ${esc(f.hw)} device not on this version">Roll out</button>
+        <button class="rollout ghost" title="Deploy to every ${esc(f.app)} / ${esc(f.hw)} device${state.filter.tag ? ` tagged #${esc(state.filter.tag)}` : ""} not on this version">Roll out${state.filter.tag ? ` to #${esc(state.filter.tag)}` : ""}</button>
         <button class="delete ghost danger" title="Delete">✕</button>
       </td>
     </tr>`).join("");
@@ -433,11 +503,14 @@ $("#firmwares tbody").addEventListener("click", async (e) => {
   const fw = state.firmwares.find((f) => f.id === Number(tr.dataset.id));
 
   if (e.target.closest(".rollout")) {
+    const tag = state.filter.tag;
     const targets = [...state.devices.values()].filter(
-      (d) => d.app === fw.app && d.hw === fw.hw && d.fw_version !== fw.version,
+      (d) => d.app === fw.app && d.hw === fw.hw && d.fw_version !== fw.version && (!tag || d.tags.includes(tag)),
     );
-    if (!targets.length) return toast(`Every ${fw.app} device already runs ${fw.version}.`);
-    await deploy(fw.id, targets.map((d) => d.id));
+    const scope = tag ? `${fw.app} device tagged #${tag}` : `${fw.app} device`;
+    if (!targets.length) return toast(`Every ${scope} already runs ${fw.version}.`);
+    // With a tag, let the server resolve its members: same result, one source of truth.
+    await deploy(fw.id, tag ? { tags: [tag] } : { device_ids: targets.map((d) => d.id) }, targets.length, tag);
   } else if (e.target.closest(".delete")) {
     if (!confirm(`Delete ${fw.app} ${fw.version} (${fw.hw})?`)) return;
     try { await api("DELETE", `/api/firmwares/${fw.id}`); } catch (err) { toast(err.message, "err"); }
@@ -469,7 +542,8 @@ $("#select-all").addEventListener("change", (e) => {
 });
 
 $("#deploy-btn").addEventListener("click", () => {
-  deploy(Number($("#deploy-fw").value), visibleSelected().map((d) => d.id));
+  const ids = visibleSelected().map((d) => d.id);
+  deploy(Number($("#deploy-fw").value), { device_ids: ids }, ids.length);
 });
 
 async function resync() {

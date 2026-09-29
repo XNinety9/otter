@@ -24,7 +24,8 @@
         </div>
       </div>
       <div class="filters">
-        <input type="search" id="search" placeholder="Search name, MAC, IP, app, version…  ( / )" aria-label="Search devices">
+        <input type="search" id="search" placeholder="Search name, MAC, IP, app, version, tag…  ( / )" aria-label="Search devices">
+        <select id="tag-filter" aria-label="Filter by tag"></select>
         <div class="chips" role="group" aria-label="Show"></div>
       </div>
       <div class="table-wrap">
@@ -88,6 +89,15 @@
       </div>
     </div>
     <dl class="info"></dl>
+    <h3>Tags</h3>
+    <div class="tag-editor">
+      <div class="tag-list"></div>
+      <form class="tag-add">
+        <input name="tag" list="known-tags" placeholder="add a tag…" maxlength="32" autocomplete="off" aria-label="New tag">
+        <button class="ghost" type="submit">Add</button>
+      </form>
+    </div>
+    <datalist id="known-tags"></datalist>
     <h3>Deployment history</h3>
     <div class="table-wrap">
       <table class="history">

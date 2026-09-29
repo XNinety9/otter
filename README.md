@@ -7,8 +7,11 @@ Fleet tracking and centralized OTA updates for home-made ESP32 / ESP8266 devices
 - **Inventory**: every device checks in periodically with its MAC, IP, firmware version,
   signal strength and uptime. The dashboard shows who is online and when each device was last seen.
 - **Firmware registry**: upload `.bin` images, versioned per application and hardware family.
-- **OTA deployments**: target one device, a selection, or roll out a version to every device of
-  an app. Progress streams live to the browser.
+- **OTA deployments**: target one device, a selection, a tag, or roll out a version to every device
+  of an app. Progress streams live to the browser.
+- **Tags**: group devices (`living-room`, `test-bench`…), filter the dashboard by tag and roll out
+  to a tag. A tag deployment only targets the tagged devices running the firmware's app and
+  hardware, and skips those already on that version.
 
 Devices *pull*: they never expose a port, sleepy devices work, and NAT is not a problem.
 The contract between devices and server is described in [docs/protocol.md](docs/protocol.md).
