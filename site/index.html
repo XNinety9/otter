@@ -64,8 +64,8 @@
           <p>Publish on <code>beta</code> or <code>stable</code> and let devices follow a channel: they update themselves, and never downgrade.</p></div>
         <div class="card"><h3><span class="icon">🔔</span> Notifications</h3>
           <p>Failed update, halted rollout, device offline or brand new: get told on ntfy, Discord or any webhook.</p></div>
-        <div class="card"><h3><span class="icon">📈</span> Metrics</h3>
-          <p>A Prometheus endpoint with fleet state and deployment outcomes, ready for your Grafana dashboards.</p></div>
+        <div class="card"><h3><span class="icon">🏠</span> Home Assistant &amp; metrics</h3>
+          <p>Devices show up in Home Assistant with a firmware update entity, and a Prometheus endpoint feeds your Grafana dashboards.</p></div>
         <div class="card"><h3><span class="icon">🐳</span> Runs anywhere</h3>
           <p>One Docker image for amd64 and arm64 (Raspberry Pi), SQLite inside. HTTPS with Caddy, accounts and API tokens included.</p></div>
         <div class="card"><h3><span class="icon">🏷️</span> CI releases</h3>
@@ -102,7 +102,7 @@
     <section class="block wrap" id="quick-start">
       <h2>Quick start</h2>
       <p class="intro">From nothing to a first over-the-air update in a few minutes.</p>
-      <div class="grid steps">
+      <div class="stack steps">
         <div class="card"><h3>Start the server</h3>
           <pre>git clone https://github.com/XNinety9/otter
 cd otter && docker compose up -d
