@@ -49,7 +49,7 @@ class HomeAssistantBridge:
         self.connected = False
         self._published: dict[str, str] = {}  # topic -> last payload, to publish changes only
         self._devices: dict[int, str] = {}  # device id -> mac, to clean up deleted devices
-        self._firmwares: list[tuple[str, str, str, str | None]] = []  # (app, hw, version, channel)
+        self._firmwares: list[tuple[str, str, str, str | None, int]] = []  # (app, hw, version, channel, size)
         self._lock = threading.Lock()
 
     # --- Topics ----------------------------------------------------------------
@@ -149,7 +149,7 @@ class HomeAssistantBridge:
         """Every device, e.g. after connecting, when firmwares change, and periodically for online/offline."""
         with SessionLocal() as session:
             self._firmwares = [
-                tuple(row) for row in session.execute(select(Firmware.app, Firmware.hw, Firmware.version, Firmware.channel))
+                tuple(row) for row in session.execute(select(Firmware.app, Firmware.hw, Firmware.version, Firmware.channel, Firmware.size))
             ]
             devices = session.scalars(select(Device).options(selectinload(Device.tags), selectinload(Device.deployments))).all()
             payloads = [DeviceOut.model_validate(d).model_dump(mode="json") for d in devices]
@@ -161,10 +161,12 @@ class HomeAssistantBridge:
     def latest_version(self, device: dict) -> str:
         """Newest firmware the device could run; its own version when nothing is newer."""
         channels = {device["channel"], STABLE} if device.get("channel") else None
+        slot = device.get("ota_slot_size")
         candidates = [
             version
-            for app, hw, version, channel in self._firmwares
+            for app, hw, version, channel, size in self._firmwares
             if app == device["app"] and hw == device["hw"] and (channels is None or channel in channels)
+            and (slot is None or size <= slot)
         ]
         newest = max(candidates, key=version_key, default=device["fw_version"])
         return max(newest, device["fw_version"], key=version_key)

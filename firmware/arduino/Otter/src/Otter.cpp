@@ -104,6 +104,7 @@ bool OtterAgent::checkin(Order &order) {
   doc["ip"] = WiFi.localIP().toString();
   doc["rssi"] = WiFi.RSSI();
   doc["uptime_s"] = millis() / 1000;
+  doc["ota_slot_size"] = ESP.getFreeSketchSpace();  // room for an update image
   String body;
   serializeJson(doc, body);
 

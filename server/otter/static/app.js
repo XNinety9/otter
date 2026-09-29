@@ -67,6 +67,11 @@ function isOnline(d) {
   return Date.now() - Date.parse(d.last_seen) < (state.interval * 2.5 + 5) * 1000;
 }
 
+// Same rule as the server: an unknown OTA slot size is trusted.
+function fits(d, fw) {
+  return d.ota_slot_size == null || fw.size <= d.ota_slot_size;
+}
+
 function bytes(n) {
   return n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`;
 }
@@ -405,14 +410,18 @@ function renderToolbar() {
   const select = $("#deploy-fw");
   const previous = select.value;
   const choices = state.firmwares.filter((f) => hws.size === 0 || (hws.size === 1 && hws.has(f.hw)));
+  const tooBig = (f) => selected.some((d) => !fits(d, f));
 
   select.innerHTML = choices.length
-    ? choices.map((f) => `<option value="${f.id}">${esc(f.app)} ${esc(f.version)} (${esc(f.hw)})</option>`).join("")
+    ? choices.map((f) => `<option value="${f.id}"${tooBig(f) ? " disabled" : ""}>${esc(f.app)} ${esc(f.version)} (${esc(f.hw)})${
+      tooBig(f) ? " · too big for the OTA slot" : ""}</option>`).join("")
     : `<option value="">${hws.size > 1 ? "mixed hardware selected" : "no compatible firmware"}</option>`;
-  if (choices.some((f) => String(f.id) === previous)) select.value = previous;
+  const usable = choices.filter((f) => !tooBig(f));
+  if (usable.some((f) => String(f.id) === previous)) select.value = previous;
+  else if (usable.length) select.value = String(usable[0].id);
 
   const btn = $("#deploy-btn");
-  btn.disabled = selected.length === 0 || !choices.length;
+  btn.disabled = selected.length === 0 || !usable.length;
   btn.textContent = selected.length ? `Deploy to ${selected.length}` : "Deploy";
 }
 
@@ -466,6 +475,7 @@ function renderPanel() {
     ["App", d.app],
     ["Hardware", d.hw],
     ["Firmware", d.fw_version],
+    ["OTA slot", d.ota_slot_size == null ? "—" : bytes(d.ota_slot_size)],
     ["IP", d.ip || "—"],
     ["MAC", d.mac],
     ["Signal", d.rssi == null ? "—" : `${d.rssi} dBm`],
@@ -600,7 +610,8 @@ $("#firmwares tbody").addEventListener("change", async (e) => {
 
 function confirmPublish(fw, channel) {
   const n = [...state.devices.values()].filter(
-    (d) => d.app === fw.app && d.hw === fw.hw && followsChannel(d, channel) && compareVersions(fw.version, d.fw_version) > 0,
+    (d) => d.app === fw.app && d.hw === fw.hw && followsChannel(d, channel) && compareVersions(fw.version, d.fw_version) > 0 &&
+      fits(d, fw),
   ).length;
   const who = channel === "stable" ? "every device following a channel" : `devices following ${channel}`;
   return confirm(`Publish ${fw.app} ${fw.version} on ${channel}?\n\n${plural(n, "device")} (${who}, on an older version) will be updated right away.`);
@@ -613,11 +624,13 @@ $("#firmwares tbody").addEventListener("click", async (e) => {
 
   if (e.target.closest(".rollout")) {
     const tag = state.filter.tag;
-    const targets = [...state.devices.values()].filter(
+    const outdated = [...state.devices.values()].filter(
       (d) => d.app === fw.app && d.hw === fw.hw && d.fw_version !== fw.version && (!tag || d.tags.includes(tag)),
     );
+    const targets = outdated.filter((d) => fits(d, fw));
     const scope = tag ? `${fw.app} device tagged #${tag}` : `${fw.app} device`;
-    if (!targets.length) return toast(`Every ${scope} already runs ${fw.version}.`);
+    if (!outdated.length) return toast(`Every ${scope} already runs ${fw.version}.`);
+    if (!targets.length) return toast(`${fw.app} ${fw.version} is too big for the OTA slot of every ${scope}.`, "err");
     // With a tag, let the server resolve its members: same result, one source of truth.
     await deploy(fw.id, tag ? { tags: [tag] } : { device_ids: targets.map((d) => d.id) }, targets.length, tag);
   } else if (e.target.closest(".staged")) {
@@ -783,7 +796,7 @@ function updateRolloutPreview() {
   const targets = [...state.devices.values()].filter(
     (d) => d.app === fw.app && d.hw === fw.hw && d.fw_version !== fw.version &&
       (!tags.length || d.tags.includes(tags[0])) &&
-      (!channel || (followsChannel(d, channel) && compareVersions(fw.version, d.fw_version) > 0)),
+      (!channel || (followsChannel(d, channel) && compareVersions(fw.version, d.fw_version) > 0)) && fits(d, fw),
   );
   const valid = stages.length && stages.every((n, i) => n >= 1 && n <= 100 && (i === 0 || n > stages[i - 1])) && stages.at(-1) === 100;
   const preview = $(".preview", rolloutDialog);

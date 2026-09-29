@@ -78,6 +78,8 @@ def record_checkin(body: CheckinIn, request: Request) -> UpdateOrder | None:
         device.ip = body.ip or (request.client.host if request.client else None)
         device.rssi = body.rssi
         device.uptime_s = body.uptime_s
+        if body.ota_slot_size is not None:
+            device.ota_slot_size = body.ota_slot_size
         device.last_seen = utcnow()
         CHECKINS.labels(body.app).inc()
 

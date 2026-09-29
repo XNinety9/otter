@@ -203,6 +203,9 @@ def create_deployments(body: DeployIn, session: Session = Depends(get_session)):
         raise HTTPException(404, "unknown device")
     if wrong := [d.mac for d in devices if d.hw != fw.hw]:
         raise HTTPException(422, f"firmware is for {fw.hw}, not compatible with {', '.join(wrong)}")
+    if too_small := [d for d in devices if not d.fits(fw)]:
+        names = ", ".join(f"{d.name or d.mac} ({d.ota_slot_size:,} bytes)" for d in too_small)
+        raise HTTPException(422, f"{fw.app} {fw.version} ({fw.size:,} bytes) doesn't fit the OTA slot of {names}")
 
     if body.tags:
         # A tag can mix hardware and apps: only target the devices this firmware is built for,
@@ -218,6 +221,9 @@ def create_deployments(body: DeployIn, session: Session = Depends(get_session)):
         outdated = [d for d in tagged if d.fw_version != fw.version]
         if not outdated and not devices:
             raise HTTPException(422, f"every {fw.app} device tagged {tag_list} already runs {fw.version}")
+        outdated = [d for d in outdated if d.fits(fw)]  # skipped: the UI shows their slot size
+        if not outdated and not devices:
+            raise HTTPException(422, f"{fw.app} {fw.version} is too big for every device tagged {tag_list}")
         devices += [d for d in outdated if d not in devices]
 
     for device in devices:

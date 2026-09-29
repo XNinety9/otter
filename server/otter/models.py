@@ -40,6 +40,7 @@ class Device(Base):
     ip: Mapped[str | None]
     rssi: Mapped[int | None]
     uptime_s: Mapped[int | None]
+    ota_slot_size: Mapped[int | None]  # bytes available for an update image, as the device reports it
     first_seen: Mapped[datetime] = mapped_column(default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(default=utcnow)
     channel: Mapped[str | None]  # follows this release channel automatically; None = manual updates
@@ -52,6 +53,10 @@ class Device(Base):
     @property
     def active_deployment(self) -> "Deployment | None":
         return next((d for d in reversed(self.deployments) if d.status in ACTIVE_STATES), None)
+
+    def fits(self, firmware: "Firmware") -> bool:
+        """Whether the image fits the device's OTA slot (unknown slot size: assume it does)."""
+        return self.ota_slot_size is None or firmware.size <= self.ota_slot_size
 
     @property
     def last_deployment(self) -> "Deployment | None":
