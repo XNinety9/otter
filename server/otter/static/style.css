@@ -54,6 +54,8 @@ header h1 { margin: 0; font-size: 20px; }
 #summary { flex: 1; }
 
 main { max-width: 1280px; margin: 0 auto; padding: 24px; display: grid; gap: 32px; }
+/* Grid items don't shrink below their content by default: let wide tables scroll instead. */
+main > section { min-width: 0; }
 
 h2 { margin: 0; font-size: 16px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -129,6 +131,30 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .upload label.grow { flex: 1; min-width: 160px; }
 .upload input { width: 100%; }
 .upload input[name="version"] { width: 90px; }
+
+dialog#device-panel {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 12px 40px rgb(0 0 0 / .3);
+}
+dialog#device-panel::backdrop { background: rgb(0 0 0 / .45); }
+.panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
+.panel-head h2 { font-size: 18px; }
+h3 { margin: 20px 0 8px; font-size: 14px; }
+.info { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px 20px; margin: 0; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.info div { min-width: 0; }
+.info dt { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+.info dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.history td.details { white-space: normal; color: var(--muted); }
+.badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--track); }
+.badge.success { color: var(--ok); }
+.badge.failed { color: var(--err); }
+.badge.pending, .badge.downloading, .badge.rebooting { color: var(--accent); }
 
 #toasts { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 10; }
 .toast { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); padding: 10px 14px; border-radius: 8px; box-shadow: 0 4px 16px rgb(0 0 0 / .15); max-width: 380px; }
