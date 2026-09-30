@@ -25,6 +25,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+#include "miniz.h" /* tinfl, in ROM */
 #include "mdns.h"
 #include "mbedtls/pk.h"
 #include "nvs.h"
@@ -55,6 +56,8 @@ typedef struct {
     char sha256[65];
     unsigned char signature[512]; /* DER, decoded from the order's base64 */
     size_t signature_len;         /* 0: unsigned */
+    char compressed_url[256];     /* the same image, zlib-compressed ("": none offered) */
+    int compressed_size;
 } update_order_t;
 
 static otter_config_t s_cfg;
@@ -755,6 +758,15 @@ static bool checkin(update_order_t *order)
             copy_string(update, "version", order->version, sizeof(order->version));
             copy_string(update, "url", order->url, sizeof(order->url));
             copy_string(update, "sha256", order->sha256, sizeof(order->sha256));
+            cJSON *compressed = cJSON_GetObjectItem(update, "compressed");
+            cJSON *compressed_size = cJSON_GetObjectItem(compressed, "size");
+            cJSON *format = cJSON_GetObjectItem(compressed, "format");
+            order->compressed_url[0] = '\0';
+            order->compressed_size = 0;
+            if (cJSON_IsNumber(compressed_size) && cJSON_IsString(format) && strcmp(format->valuestring, "zlib") == 0) {
+                copy_string(compressed, "url", order->compressed_url, sizeof(order->compressed_url));
+                order->compressed_size = compressed_size->valueint;
+            }
             cJSON *signature = cJSON_GetObjectItem(update, "signature");
             order->signature_len = 0;
             if (cJSON_IsString(signature) &&
@@ -831,6 +843,64 @@ static const char *verify_signature(const uint8_t digest[32], const update_order
     return err;
 }
 
+/* Where downloaded bytes go: inflated first when the transfer is compressed (#25), then
+ * written to the OTA slot and hashed. */
+typedef struct {
+    esp_ota_handle_t ota;
+    psa_hash_operation_t *sha;
+    int written;    /* image bytes written */
+    int image_size; /* as announced */
+    tinfl_decompressor *inflator; /* NULL: the transfer is the plain image */
+    uint8_t *dict;                /* TINFL_LZ_DICT_SIZE bytes: the inflate window */
+    size_t dict_ofs;
+    bool inflated; /* the compressed stream ended */
+} sink_t;
+
+static const char *sink_image(sink_t *s, const uint8_t *data, size_t n)
+{
+    if (s->written + (int)n > s->image_size) {
+        return "image larger than announced";
+    }
+    if (esp_ota_write(s->ota, data, n) != ESP_OK) {
+        return "flash write failed";
+    }
+    psa_hash_update(s->sha, data, n);
+    s->written += n;
+    return NULL;
+}
+
+/* more: bytes of the transfer are still to come after these. */
+static const char *sink_transfer(sink_t *s, const uint8_t *in, size_t n, bool more)
+{
+    if (!s->inflator) {
+        return sink_image(s, in, n);
+    }
+    while (true) {
+        size_t in_bytes = n, out_bytes = TINFL_LZ_DICT_SIZE - s->dict_ofs;
+        tinfl_status status = tinfl_decompress(s->inflator, in, &in_bytes, s->dict, s->dict + s->dict_ofs, &out_bytes,
+                                               TINFL_FLAG_PARSE_ZLIB_HEADER | (more ? TINFL_FLAG_HAS_MORE_INPUT : 0));
+        in += in_bytes;
+        n -= in_bytes;
+        if (out_bytes) {
+            const char *err = sink_image(s, s->dict + s->dict_ofs, out_bytes);
+            if (err) {
+                return err;
+            }
+            s->dict_ofs = (s->dict_ofs + out_bytes) & (TINFL_LZ_DICT_SIZE - 1);
+        }
+        if (status < TINFL_STATUS_DONE) {
+            return "decompression failed";
+        }
+        if (status == TINFL_STATUS_DONE) {
+            s->inflated = true;
+            return n ? "data after the compressed image" : NULL;
+        }
+        if (status == TINFL_STATUS_NEEDS_MORE_INPUT && n == 0) {
+            return more ? NULL : "compressed image truncated";
+        }
+    }
+}
+
 static void apply_update(const update_order_t *order)
 {
     const int dep = order->deployment_id;
@@ -860,13 +930,26 @@ static void apply_update(const update_order_t *order)
     wifi_ps_type_t saved_ps = WIFI_PS_NONE;
     bool ps_changed = false;
 
+    /* A compressed transfer when offered: the device inflates it on the fly. */
+    const bool compressed = order->compressed_url[0] && order->compressed_size > 0;
+    const char *url = compressed ? order->compressed_url : order->url;
+    const int transfer_size = compressed ? order->compressed_size : order->size;
+    sink_t sink = {.sha = &sha, .image_size = order->size};
+
     const esp_partition_t *partition = esp_ota_get_next_update_partition(NULL);
     char *buf = malloc(CHUNK_SIZE);
+    if (compressed) {
+        sink.inflator = malloc(sizeof(tinfl_decompressor));
+        sink.dict = malloc(TINFL_LZ_DICT_SIZE);
+        if (sink.inflator) {
+            tinfl_init(sink.inflator);
+        }
+    }
     if (!partition) {
         err = "no OTA partition";
         goto done;
     }
-    if (!buf) {
+    if (!buf || (compressed && (!sink.inflator || !sink.dict))) {
         err = "out of memory";
         goto done;
     }
@@ -883,6 +966,7 @@ static void apply_update(const update_order_t *order)
         err = "esp_ota_begin failed (image too big?)";
         goto done;
     }
+    sink.ota = ota;
     int64_t t_connect = esp_timer_get_time();
 
     /* Modem sleep caps throughput to what fits between DTIM beacons: keep the radio awake. */
@@ -890,12 +974,13 @@ static void apply_update(const update_order_t *order)
         ps_changed = esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK;
     }
 
-    ESP_LOGI(TAG, "flash erase took %lld ms", (t_connect - t_start) / 1000);
+    ESP_LOGI(TAG, "flash erase took %lld ms%s", (t_connect - t_start) / 1000,
+             compressed ? ", downloading it compressed" : "");
 
     int64_t t_slice = 0, t_last_read = 0, max_gap = 0;
     int slice_start = 0, connections = 0;
 
-    while (received < order->size) {
+    while (received < transfer_size) {
         if (!client) {
             /* On a lossy link a stalled connection rarely recovers, as the server's TCP
              * waits twice as long after each loss: a new one starts afresh, from where we are. */
@@ -909,7 +994,7 @@ static void apply_update(const update_order_t *order)
                 ESP_LOGW(TAG, "download stalled at %d bytes, resuming (%d/%d)", received, connections - 1,
                          MAX_RESUMES);
             }
-            err = open_download(order->url, received, &client);
+            err = open_download(url, received, &client);
             if (err && strcmp(err, "firmware download refused") == 0) {
                 goto done;
             } else if (err) {
@@ -929,24 +1014,22 @@ static void apply_update(const update_order_t *order)
             client = NULL;
             continue;
         }
-        if (received + n > order->size) {
+        if (received + n > transfer_size) {
             err = "image larger than announced";
             goto done;
         }
-        if (esp_ota_write(ota, buf, n) != ESP_OK) {
-            err = "flash write failed";
+        received += n;
+        if ((err = sink_transfer(&sink, (const uint8_t *)buf, n, received < transfer_size)) != NULL) {
             goto done;
         }
-        psa_hash_update(&sha, (const uint8_t *)buf, n);
-        received += n;
         int64_t now = esp_timer_get_time();
         if (now - t_last_read > max_gap) {
             max_gap = now - t_last_read;
         }
         t_last_read = now;
 
-        int pct = (int)((int64_t)received * 100 / order->size);
-        if (pct - last_reported >= 10 && received < order->size) {
+        int pct = (int)((int64_t)received * 100 / transfer_size);
+        if (pct - last_reported >= 10 && received < transfer_size) {
             last_reported = pct;
             int64_t slice_ms = (now - t_slice) / 1000;
             bool keep_going = report(dep, "downloading", pct, NULL);
@@ -965,6 +1048,10 @@ static void apply_update(const update_order_t *order)
     }
 
     ESP_LOGI(TAG, "download done: %d bytes in %lld ms", received, (esp_timer_get_time() - t_start) / 1000);
+    if (sink.written != order->size) {
+        err = compressed && !sink.inflated ? "compressed image truncated" : "image smaller than announced";
+        goto done;
+    }
     if (psa_hash_finish(&sha, digest, sizeof(digest), &digest_len) != PSA_SUCCESS) {
         err = "sha256 failed";
         goto done;
@@ -1000,6 +1087,8 @@ done:
         esp_http_client_cleanup(client);
     }
     free(buf);
+    free(sink.inflator);
+    free(sink.dict);
     psa_hash_abort(&sha);
     if (ps_changed) {
         esp_wifi_set_ps(saved_ps);

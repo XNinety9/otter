@@ -3,6 +3,7 @@
 import asyncio
 import re
 from datetime import datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -18,8 +19,8 @@ from .events import broadcaster, wakeups
 from .metrics import CHECKINS, CRASHES, DOWNLOAD_BYTES, DOWNLOADS
 from .notify import notifier
 from .models import CRASH_RESETS, Command, Deployment, Device, Firmware
-from .schemas import CheckinIn, CheckinOut, CommandResultIn, ConfigOrder, CrashIn, DeviceOut, ProgressIn, UpdateOrder
-from .storage import firmware_path
+from .schemas import CheckinIn, CheckinOut, CommandResultIn, CompressedImage, ConfigOrder, CrashIn, DeviceOut, ProgressIn, UpdateOrder
+from .storage import compressed_path, firmware_path
 
 
 # Longest a check-in may be held open (long polling).
@@ -142,6 +143,9 @@ def record_checkin(
                     size=fw.size,
                     sha256=fw.sha256,
                     signature=fw.signature,
+                    compressed=CompressedImage(
+                        url=f"{base}/api/v1/firmwares/{fw.id}/download?format=zlib", size=fw.compressed_size
+                    ) if fw.compressed_size else None,
                 )
 
         sent, expired = commands.deliver(device)
@@ -260,19 +264,25 @@ def report_progress(
 
 @router.get("/firmwares/{firmware_id}/download")
 def download_firmware(
-    firmware_id: int, request: Request, auth: DeviceAuth = Depends(authenticate), session: Session = Depends(get_session)
+    firmware_id: int,
+    request: Request,
+    format: Literal["bin", "zlib"] = "bin",
+    auth: DeviceAuth = Depends(authenticate),
+    session: Session = Depends(get_session),
 ):
-    """The whole image, or its end with `Range: bytes=<offset>-` when a device resumes a stalled download."""
+    """The whole image, or its end with `Range: bytes=<offset>-` when a device resumes a stalled
+    download. format=zlib: its compressed copy (#25), ranges then count compressed bytes."""
     fw = session.get(Firmware, firmware_id)
     if fw is None:
         raise HTTPException(404, "unknown firmware")
+    if format == "zlib" and not fw.compressed_size:
+        raise HTTPException(404, "no compressed copy of this image")
+    path, size = (compressed_path(fw.sha256), fw.compressed_size) if format == "zlib" else (firmware_path(fw.sha256), fw.size)
     resume = re.fullmatch(r"bytes=(\d+)-", request.headers.get("range", ""))
-    offset = min(int(resume.group(1)), fw.size) if resume else 0
+    offset = min(int(resume.group(1)), size) if resume else 0
     if offset == 0:
         DOWNLOADS.labels(fw.app, fw.version).inc()
-    DOWNLOAD_BYTES.inc(fw.size - offset)
+    DOWNLOAD_BYTES.inc(size - offset)
     return FileResponse(
-        firmware_path(fw.sha256),
-        media_type="application/octet-stream",
-        filename=f"{fw.app}-{fw.hw}-{fw.version}.bin",
+        path, media_type="application/octet-stream", filename=f"{fw.app}-{fw.hw}-{fw.version}.{format}"
     )
