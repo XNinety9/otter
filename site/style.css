@@ -110,8 +110,11 @@ footer .brand { font-size: 16px; }
 .toc { position: sticky; top: 84px; align-self: start; max-height: calc(100vh - 100px); overflow-y: auto; font-size: 14px; }
 .toc ul { list-style: none; margin: 0; padding: 0; }
 .toc ul ul { padding-left: 14px; }
-.toc a { display: block; padding: 3px 0; color: var(--muted); text-decoration: none; }
+.toc a { display: block; padding: 3px 0 3px 10px; border-left: 2px solid var(--border); color: var(--muted); text-decoration: none; transition: color .15s, border-color .15s; }
 .toc a:hover { color: var(--text); }
+/* The section being read (toc.js), and the section around a sub-section being read. */
+.toc a.active { color: var(--accent); border-left-color: var(--accent); font-weight: 600; }
+.toc a.parent { color: var(--text); }
 .toc .title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 8px; }
 article.doc { min-width: 0; }
 article.doc h1 { font-size: 38px; letter-spacing: -.02em; margin-top: 0; }

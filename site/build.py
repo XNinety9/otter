@@ -48,6 +48,7 @@ TEMPLATE = """<!doctype html>
       <p class="caption">Rendered from <a href="{repo}/blob/dev/{source}">{source}</a>.</p>
     </article>
   </main>
+  <script src="toc.js" defer></script>
 </body>
 </html>
 """
@@ -104,7 +105,7 @@ def render(page: str, title: str, source: Path) -> str:
 def main() -> None:
     shutil.rmtree(OUT, ignore_errors=True)
     shutil.copytree(SITE / "assets", OUT / "assets")
-    for name in ("index.html", "style.css"):
+    for name in ("index.html", "style.css", "toc.js"):
         shutil.copy(SITE / name, OUT / name)
     for page, title, source, _ in PAGES:
         (OUT / page).write_text(render(page, title, source))
