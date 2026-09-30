@@ -118,3 +118,15 @@ def test_a_superseded_long_poll_delivers_nothing(client, checkin):
     thread.join(10)
     assert result["commands"] == []
     assert [c["name"] for c in checkin(mac=A)["commands"]] == ["identify"]
+
+
+def test_secret_arguments_are_never_shown_nor_kept(client, checkin):
+    checkin(mac=A)
+    sent = send(client, [A], "set_wifi", {"ssid": "home", "password": "hunter22"})
+    assert sent[0]["args"] == {"ssid": "home", "password": "••••••"}
+    order = checkin(mac=A)["commands"][0]
+    assert order["args"]["password"] == "hunter22"  # the device gets it
+    client.post(f"/api/v1/commands/{order['id']}/result", json={"ok": True, "message": "joined home"})
+    assert history(client, A)[0]["args"] == {"ssid": "home", "password": "••••••"}
+    with SessionLocal() as session:
+        assert "hunter22" not in session.get(Command, order["id"]).args  # gone from the database

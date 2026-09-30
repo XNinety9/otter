@@ -216,6 +216,10 @@ pio run -e esp8266 -t upload -t monitor
 
 The device shows up in the dashboard within seconds.
 
+**Without `WIFI_SSID`**, the ESP-IDF example uses the network it saved last, or waits for one
+over its serial port (see [Wi-Fi without recompiling](#wi-fi-without-recompiling)): one firmware
+image for every network.
+
 **Without `OTTER_SERVER`**, the ESP-IDF agent finds the server on the LAN over mDNS, if it runs
 with `OTTER_MDNS=1`: then the server's IP can change without reflashing anything. Devices look
 for it again after 3 failed check-ins in a row. The advertisement carries `OTTER_PUBLIC_URL` when
@@ -267,6 +271,23 @@ otter.onCommand("set_level", [](const String &args, String &message) {
 example drives the ESP32-C6-DevKitC-1's RGB LED). With the Arduino library, an ESP32 long-polls
 too (the agent runs in its own task: register handlers before `begin()`); an ESP8266 receives
 commands at its check-ins, every 30 s by default.
+
+## Wi-Fi without recompiling
+
+The ESP-IDF example speaks [Improv Wi-Fi](https://www.improv-wifi.com/) on its serial port: right
+after flashing it (even a build without `WIFI_SSID`), give it a network from a browser with
+[ESP Web Tools](https://esphome.github.io/esp-web-tools/) or Home Assistant, or from a terminal:
+
+```sh
+uv run --with pyserial tools/improv.py /dev/ttyACM0 --ssid MyNetwork   # asks for the password
+uv run --with pyserial tools/improv.py /dev/ttyACM0 --state            # --info, --scan too
+```
+
+The network is saved on the device and used again at every boot. To move a device that is still
+online to another network (new router, moving house), send it the `set_wifi` command from its
+panel, with `{"ssid": "…", "password": "…"}`: if it can't join the new network within about 40 s,
+it goes back to the previous one and the command fails. Otter never shows secret arguments
+(`password`, `key`, `token`…) and erases them once the device has answered.
 
 ## Battery devices (deep sleep)
 
