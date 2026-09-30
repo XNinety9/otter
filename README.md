@@ -152,8 +152,9 @@ your desk**: over plain HTTP, passwords and cookies can be sniffed on the networ
 
 ### Device credentials
 
-Devices enroll with the fleet key and then get a token of their own (the ESP-IDF agent keeps it
-in NVS): once a device uses it, the fleet key alone can't impersonate it. From a device's panel,
+Devices enroll with the fleet key and then get a token of their own (kept in NVS by the ESP-IDF
+agent and by the Arduino library on ESP32; an ESP8266 keeps using the fleet key): once a device
+uses it, the fleet key alone can't impersonate it. From a device's panel,
 **Revoke** blocks it and **Re-enroll** lets it get a new token. Set `OTTER_DEVICE_APPROVAL=1` to
 approve each new device before it can check in. Details: [Authentication](docs/protocol.md#authentication).
 
@@ -178,7 +179,9 @@ the usual way (USB, or an update it still accepts unsigned).
 To catch mistakes at upload, give the server the public key: `OTTER_SIGNING_PUBLIC_KEY` (PEM, or
 its path; `openssl pkey -in otter-signing.key -pubout`). It then refuses unsigned or wrongly
 signed images. In CI, store the private key in the `OTTER_SIGNING_KEY` secret. ECDSA P-256 is
-recommended; RSA keys work too. The Arduino library doesn't check signatures yet.
+recommended; RSA keys work too. The Arduino library checks signatures on ESP32 (`config.signingKey`;
+its example takes `OTTER_SIGNING_PUBKEY` too); an ESP8266 given a key refuses every update, it
+can't check them yet.
 
 ## Try it without hardware
 
@@ -260,8 +263,9 @@ otter.onCommand("set_level", [](const String &args, String &message) {
 ```
 
 `reboot` and `identify` are built in; override `identify` to blink your own LED (the ESP-IDF
-example drives the ESP32-C6-DevKitC-1's RGB LED). The Arduino library only receives commands at
-its check-ins, every 30 s by default.
+example drives the ESP32-C6-DevKitC-1's RGB LED). With the Arduino library, an ESP32 long-polls
+too (the agent runs in its own task: register handlers before `begin()`); an ESP8266 receives
+commands at its check-ins, every 30 s by default.
 
 ## Battery devices (deep sleep)
 
@@ -278,8 +282,8 @@ esp_deep_sleep(600ULL * 1000000);
 
 Updates, commands and configuration changes wait for the next wake-up. A new firmware that can't
 reach the server for 3 wake-ups in a row is rolled back. The ESP-IDF example has a sleepy variant
-(`pio run -e esp32c6-sleepy`, app `otter-sleepy`, 60 s of sleep). The Arduino library doesn't
-have a one-shot mode yet.
+(`pio run -e esp32c6-sleepy`, app `otter-sleepy`, 60 s of sleep). With the Arduino library, call
+`otter.checkinOnce(config, 600)` instead of `begin()`.
 
 ## Compressed updates
 
