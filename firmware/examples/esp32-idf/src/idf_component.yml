@@ -1,9 +1,7 @@
 dependencies:
-  # Drives the ESP32-C6-DevKitC-1's RGB LED for the "identify" command.
+  # Drives addressable RGB LEDs (WS2812) for the "identify" command.
   espressif/led_strip:
     version: "^3.0.0"
-    rules:
-      - if: "target == esp32c6"
   # Parses the arguments of the set_wifi command.
   espressif/cjson:
     version: "^1.7.19"
