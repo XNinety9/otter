@@ -22,9 +22,7 @@
 #include "otter_ca.h"       // generated from OTTER_CA_CERT, see CMakeLists.txt
 #include "otter_signing.h"  // generated from OTTER_SIGNING_PUBKEY
 
-#if CONFIG_IDF_TARGET_ESP32C6
 #include "led_strip.h"
-#endif
 
 #ifndef OTTER_FLEET_KEY
 #define OTTER_FLEET_KEY ""
@@ -147,37 +145,99 @@ static bool wifi_join(const char *ssid, const char *password)
 
 /* Remote commands (sent from the Otter dashboard) ----------------------------- */
 
-/* "identify": blinks the board's LED for a few seconds, to find the device on a shelf. */
-static esp_err_t identify(const char *args, char *result, size_t result_size, void *ctx)
-{
+/* "identify": blinks an LED for a few seconds, to find the device on a shelf. Which one comes
+ * from the remote configuration: {"led_gpio": 8, "led_type": "ws2812"} for an addressable RGB
+ * LED, or "gpio" for a plain one. The defaults suit the ESP32-C6-DevKitC-1 and most ESP32
+ * boards; other boards: try pins from the dashboard, no reflashing needed. */
 #if CONFIG_IDF_TARGET_ESP32C6
-    static led_strip_handle_t led; /* the DevKitC-1's RGB LED, on GPIO 8 */
-    if (!led) {
-        led_strip_config_t strip = {.strip_gpio_num = 8, .max_leds = 1};
+#define DEFAULT_LED_GPIO 8
+#define DEFAULT_LED_TYPE "ws2812"
+static const int RESERVED_PINS[] = {12, 13, 16, 17, 24, 25, 26, 27, 28, 29, 30}; /* USB, console, flash */
+#elif CONFIG_IDF_TARGET_ESP32
+#define DEFAULT_LED_GPIO 2
+#define DEFAULT_LED_TYPE "gpio"
+static const int RESERVED_PINS[] = {1, 3, 6, 7, 8, 9, 10, 11}; /* console, flash */
+#else
+#define DEFAULT_LED_GPIO -1 /* unknown board: set led_gpio */
+#define DEFAULT_LED_TYPE "gpio"
+static const int RESERVED_PINS[] = {-1};
+#endif
+
+static led_strip_handle_t s_strip; /* the addressable LED last used, on s_strip_pin */
+static int s_strip_pin = -1;
+
+static void release_strip(void)
+{
+    if (s_strip) {
+        led_strip_del(s_strip);
+        gpio_reset_pin(s_strip_pin);
+        s_strip = NULL;
+        s_strip_pin = -1;
+    }
+}
+
+static esp_err_t blink_ws2812(int pin)
+{
+    if (s_strip && s_strip_pin != pin) {
+        release_strip();
+    }
+    if (!s_strip) {
+        led_strip_config_t strip = {.strip_gpio_num = pin, .max_leds = 1};
         led_strip_rmt_config_t rmt = {.resolution_hz = 10 * 1000 * 1000};
-        ESP_RETURN_ON_ERROR(led_strip_new_rmt_device(&strip, &rmt, &led), TAG, "LED init failed");
+        ESP_RETURN_ON_ERROR(led_strip_new_rmt_device(&strip, &rmt, &s_strip), TAG, "LED init failed");
+        s_strip_pin = pin;
     }
     for (int i = 0; i < 10; i++) {
         if (i % 2 == 0) {
-            led_strip_set_pixel(led, 0, 0, 40, 60);
-            led_strip_refresh(led);
+            led_strip_set_pixel(s_strip, 0, 0, 80, 160);
+            led_strip_refresh(s_strip);
         } else {
-            led_strip_clear(led);
+            led_strip_clear(s_strip);
         }
         vTaskDelay(pdMS_TO_TICKS(250));
     }
-    led_strip_clear(led);
-#else
-    const gpio_num_t pin = GPIO_NUM_2; /* the blue LED of most ESP32 dev boards */
+    return led_strip_clear(s_strip);
+}
+
+static void blink_gpio(int pin)
+{
+    if (s_strip_pin == pin) {
+        release_strip();
+    }
     gpio_reset_pin(pin);
     gpio_set_direction(pin, GPIO_MODE_OUTPUT);
     for (int i = 0; i < 10; i++) {
         gpio_set_level(pin, i % 2 == 0);
         vTaskDelay(pdMS_TO_TICKS(250));
     }
-    gpio_set_level(pin, 0);
-#endif
-    snprintf(result, result_size, "blinked the LED");
+    gpio_reset_pin(pin); /* back to its default state, whatever the LED's polarity */
+}
+
+static esp_err_t identify(const char *args, char *result, size_t result_size, void *ctx)
+{
+    int pin = otter_config_get_int("led_gpio", DEFAULT_LED_GPIO);
+    char type[8];
+    otter_config_get_str("led_type", type, sizeof(type), DEFAULT_LED_TYPE);
+    if (pin < 0 || !GPIO_IS_VALID_OUTPUT_GPIO(pin)) {
+        snprintf(result, result_size, "no LED to blink: set led_gpio in the configuration");
+        return ESP_ERR_INVALID_ARG;
+    }
+    for (size_t i = 0; i < sizeof(RESERVED_PINS) / sizeof(RESERVED_PINS[0]); i++) {
+        if (RESERVED_PINS[i] == pin) {
+            snprintf(result, result_size, "GPIO %d is used by the flash, USB or console: pick another", pin);
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    if (strcmp(type, "ws2812") == 0) {
+        ESP_RETURN_ON_ERROR(blink_ws2812(pin), TAG, "blink failed");
+    } else if (strcmp(type, "gpio") == 0) {
+        blink_gpio(pin);
+    } else {
+        snprintf(result, result_size, "led_type must be \"ws2812\" or \"gpio\"");
+        return ESP_ERR_INVALID_ARG;
+    }
+    /* Whether an LED lit up can't be checked from here: say what was tried. */
+    snprintf(result, result_size, "blinked GPIO %d as a %s LED", pin, strcmp(type, "gpio") ? "WS2812" : "plain");
     return ESP_OK;
 }
 
