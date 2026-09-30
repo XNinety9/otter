@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.c" INCLUDE_DIRS "." REQUIRES otter esp_wifi esp_netif nvs_flash esp_event esp_driver_gpio)
+idf_component_register(SRCS "main.c" "improv.c" INCLUDE_DIRS "." REQUIRES otter esp_wifi esp_netif nvs_flash esp_event esp_driver_gpio esp_driver_uart esp_hal_usb esp_app_format)
 
 # Writes header, defining has_macro and the C string pem_name, from the PEM in the environment
 # variable env_var: the PEM itself (as CI secrets do) or its path (relative paths start from

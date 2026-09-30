@@ -3,8 +3,11 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 
+#include "cJSON.h"
 #include "driver/gpio.h"
+#include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_sleep.h"
@@ -14,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "nvs_flash.h"
+#include "improv.h"
 #include "otter_agent.h"
 #include "otter_ca.h"       // generated from OTTER_CA_CERT, see CMakeLists.txt
 #include "otter_signing.h"  // generated from OTTER_SIGNING_PUBKEY
@@ -27,17 +31,38 @@
 #endif
 
 static const char *TAG = "demo";
+
+#ifdef OTTER_DEMO_SLEEP_S
+#define OTTER_APP_NAME "otter-sleepy"
+#else
+#define OTTER_APP_NAME "otter-demo"
+#endif
 static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED BIT0
+#define WIFI_DISCONNECTED BIT1 /* while joining another network (wifi_join) */
+static volatile bool s_joining; /* wifi_join() drives the connection: no automatic reconnection */
+
+/* Whether a network is set: built in (WIFI_SSID), or saved by the Wi-Fi driver after Improv
+ * provisioning or a set_wifi command. */
+static bool wifi_configured(void)
+{
+    wifi_config_t cfg = {0};
+    return esp_wifi_get_config(WIFI_IF_STA, &cfg) == ESP_OK && cfg.sta.ssid[0];
+}
 
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        if (wifi_configured()) {
+            esp_wifi_connect();
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED);
-        ESP_LOGW(TAG, "Wi-Fi lost, reconnecting");
-        esp_wifi_connect();
+        xEventGroupSetBits(s_wifi_events, WIFI_DISCONNECTED);
+        if (!s_joining && wifi_configured()) {
+            ESP_LOGW(TAG, "Wi-Fi lost, reconnecting");
+            esp_wifi_connect();
+        }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = data;
         ESP_LOGI(TAG, "got IP " IPSTR, IP2STR(&event->ip_info.ip));
@@ -57,14 +82,67 @@ static void wifi_connect(void)
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_wifi_event, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi_event, NULL));
 
-    wifi_config_t cfg = {
-        .sta = {.ssid = WIFI_SSID, .password = WIFI_PASS},
-    };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
+    if (WIFI_SSID[0]) { /* built in; else the network saved earlier, if any */
+        wifi_config_t cfg = {
+            .sta = {.ssid = WIFI_SSID, .password = WIFI_PASS},
+        };
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
+    }
     ESP_ERROR_CHECK(esp_wifi_start());
+}
 
-    xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED, pdFALSE, pdTRUE, portMAX_DELAY);
+static bool wifi_connected(void)
+{
+    return xEventGroupGetBits(s_wifi_events) & WIFI_CONNECTED;
+}
+
+/* Connects with cfg, a few attempts within about 20 s. */
+static bool wifi_try(wifi_config_t *cfg)
+{
+    /* The configuration can't change while a connection is in progress: stop first. */
+    xEventGroupClearBits(s_wifi_events, WIFI_DISCONNECTED);
+    if (esp_wifi_disconnect() == ESP_OK) {
+        xEventGroupWaitBits(s_wifi_events, WIFI_DISCONNECTED, pdTRUE, pdTRUE, pdMS_TO_TICKS(3000));
+    }
+    if (esp_wifi_set_config(WIFI_IF_STA, cfg) != ESP_OK) {
+        return false;
+    }
+    for (int attempt = 0; attempt < 4; attempt++) {
+        xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED | WIFI_DISCONNECTED);
+        esp_wifi_connect();
+        EventBits_t bits = xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED | WIFI_DISCONNECTED, pdFALSE, pdFALSE,
+                                               pdMS_TO_TICKS(10000));
+        if (bits & WIFI_CONNECTED) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Joins another network; back to the previous one if it fails. The driver saves the network
+ * in NVS: it is used again at the next boot. */
+static bool wifi_join(const char *ssid, const char *password)
+{
+    wifi_config_t previous = {0}, cfg = {0};
+    esp_wifi_get_config(WIFI_IF_STA, &previous);
+    snprintf((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), "%s", ssid);
+    snprintf((char *)cfg.sta.password, sizeof(cfg.sta.password), "%s", password);
+    s_joining = true;
+    bool joined = wifi_try(&cfg);
+    if (!joined) {
+        ESP_LOGW(TAG, "couldn't join \"%s\": back to the previous network", ssid);
+        if (previous.sta.ssid[0]) {
+            wifi_try(&previous);
+        } else {
+            esp_wifi_set_config(WIFI_IF_STA, &previous);
+        }
+    }
+    s_joining = false;
+    if (!wifi_connected() && wifi_configured()) {
+        esp_wifi_connect(); /* keep trying in the background, as usual */
+    }
+    return joined;
 }
 
 /* Remote commands (sent from the Otter dashboard) ----------------------------- */
@@ -110,6 +188,29 @@ static void on_config(const char *config_json, void *ctx)
     ESP_LOGI(TAG, "configuration: %s", config_json);
 }
 
+static bool wifi_join(const char *ssid, const char *password);
+
+/* "set_wifi" {"ssid": …, "password": …}: moves the device to another network from the
+ * dashboard (moving house, a new router); back to the current one if it can't join it. */
+static esp_err_t set_wifi(const char *args, char *result, size_t result_size, void *ctx)
+{
+    cJSON *root = cJSON_Parse(args);
+    cJSON *ssid = cJSON_GetObjectItem(root, "ssid");
+    cJSON *password = cJSON_GetObjectItem(root, "password");
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    if (!cJSON_IsString(ssid) || !ssid->valuestring[0] || strlen(ssid->valuestring) > 32) {
+        snprintf(result, result_size, "args: {\"ssid\": …, \"password\": …}");
+    } else if (wifi_join(ssid->valuestring, cJSON_IsString(password) ? password->valuestring : "")) {
+        snprintf(result, result_size, "joined %s", ssid->valuestring);
+        err = ESP_OK;
+    } else {
+        snprintf(result, result_size, "couldn't join %s: still on the previous network", ssid->valuestring);
+        err = ESP_FAIL;
+    }
+    cJSON_Delete(root);
+    return err;
+}
+
 /* "echo": answers with its arguments, to try custom commands from the dashboard. */
 static esp_err_t echo(const char *args, char *result, size_t result_size, void *ctx)
 {
@@ -128,13 +229,25 @@ void app_main(void)
 
     wifi_connect();
 
+    // Improv Wi-Fi on the serial port: set or change the network from a browser (ESP Web Tools,
+    // Home Assistant) or tools/improv.py, without recompiling.
+    improv_config_t improv = {
+        .join = wifi_join,
+        .connected = wifi_connected,
+        .url = OTTER_SERVER,
+        .firmware_name = OTTER_APP_NAME,
+        .firmware_version = esp_app_get_description()->version,
+        .device_name = OTTER_APP_NAME,
+    };
+    improv_start(&improv);
+    if (!wifi_configured()) {
+        ESP_LOGW(TAG, "no Wi-Fi network set: provision one over the serial port (Improv)");
+    }
+    xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED, pdFALSE, pdTRUE, portMAX_DELAY);
+
     otter_config_t otter = {
         .server_url = OTTER_SERVER, // "" (OTTER_SERVER unset at build time): found over mDNS
-#ifdef OTTER_DEMO_SLEEP_S
-        .app_name = "otter-sleepy",
-#else
-        .app_name = "otter-demo",
-#endif
+        .app_name = OTTER_APP_NAME,
         .fleet_key = OTTER_FLEET_KEY[0] ? OTTER_FLEET_KEY : NULL,
 #ifdef OTTER_HAS_CA
         .cert_pem = OTTER_CA_PEM,
@@ -145,6 +258,7 @@ void app_main(void)
     };
     otter_register_command("identify", identify, NULL);
     otter_register_command("echo", echo, NULL);
+    otter_register_command("set_wifi", set_wifi, NULL);
     otter_on_config(on_config, NULL);
 
 #ifdef OTTER_DEMO_SLEEP_S

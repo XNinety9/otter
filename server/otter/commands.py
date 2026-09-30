@@ -2,6 +2,7 @@
 that long-polls), then acknowledged by the device. See "Commands" in docs/protocol.md."""
 
 import json
+import re
 from datetime import timedelta
 
 from .db import utcnow
@@ -45,7 +46,18 @@ def as_orders(commands: list[Command]) -> list[CommandOrder]:
     return [CommandOrder(id=c.id, name=c.name, args=json.loads(c.args) if c.args else None) for c in commands]
 
 
+# Arguments whose values must not be shown nor kept: a set_wifi password, a key, a token…
+SECRET_ARG = re.compile(r"pass|secret|token|key|pin", re.IGNORECASE)
+MASK = "••••••"
+
+
+def redact(args: dict | None) -> dict | None:
+    return {k: MASK if SECRET_ARG.search(k) else v for k, v in args.items()} if args else args
+
+
 def record_result(command: Command, ok: bool, message: str | None) -> None:
     command.status = "done" if ok else "failed"
     command.result = message
     command.done_at = utcnow()
+    if command.args:  # delivered and answered: its secrets aren't needed anymore
+        command.args = json.dumps(redact(json.loads(command.args)))

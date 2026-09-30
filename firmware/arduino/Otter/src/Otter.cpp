@@ -352,9 +352,14 @@ void OtterAgent::runCommand(int id, const char *name, const String &args) {
   if (message.length()) doc["message"] = message.substring(0, 200);
   String body;
   serializeJson(doc, body);
-  if (post("/api/v1/commands/" + String(id) + "/result", body, nullptr, kHttpTimeoutMs) != 200) {
-    OTTER_LOG("command %d: result not delivered", id);
+  // A few tries: right after a command that touches the network the first connection often
+  // fails, and the server can't send the command again (it could run twice).
+  int code = -1;
+  for (int attempt = 0; attempt < 3 && code < 0; attempt++) {
+    if (attempt) delay(2000);
+    code = post("/api/v1/commands/" + String(id) + "/result", body, nullptr, kHttpTimeoutMs);
   }
+  if (code != 200) OTTER_LOG("command %d: result not delivered (HTTP %d)", id, code);
 }
 
 void OtterAgent::authenticate(HTTPClient &http) {

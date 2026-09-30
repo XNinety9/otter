@@ -165,13 +165,20 @@ class CommandResultIn(BaseModel):
     message: str | None = Field(default=None, max_length=200)
 
 
+def redact_args(args: dict | None) -> dict | None:
+    from .commands import redact  # avoid an import cycle
+
+    return redact(args)
+
+
 class CommandOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     device_id: int
     name: str
-    args: Annotated[dict | None, BeforeValidator(lambda v: json.loads(v) if isinstance(v, str) else v)]
+    # Secret values (a password…) are never shown: see commands.redact.
+    args: Annotated[dict | None, BeforeValidator(lambda v: redact_args(json.loads(v) if isinstance(v, str) else v))]
     status: str
     result: str | None
     created_at: UtcDatetime

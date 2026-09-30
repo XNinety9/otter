@@ -483,8 +483,17 @@ static void run_command(int id, const char *name, const char *args)
     cJSON_Delete(ack);
     char path[64];
     snprintf(path, sizeof(path), "/api/v1/commands/%d/result", id);
-    if (body && post_json(path, body, NULL, 0, HTTP_TIMEOUT_MS, NULL) != 200) {
-        ESP_LOGW(TAG, "command %d: result not delivered", id);
+    /* A few tries: right after a command that touches the network (set_wifi…), the first
+     * connection often fails; the server can't send the command again (it could run twice). */
+    int status = -1;
+    for (int attempt = 0; body && attempt < 3 && status < 0; attempt++) {
+        if (attempt) {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+        status = post_json(path, body, NULL, 0, HTTP_TIMEOUT_MS, NULL);
+    }
+    if (status != 200) {
+        ESP_LOGW(TAG, "command %d: result not delivered (HTTP %d)", id, status);
     }
     free(body);
 }
