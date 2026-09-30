@@ -37,6 +37,9 @@ void setup() {
 #ifdef OTTER_SIGNING_PUBKEY_PEM
   config.signingKey = OTTER_SIGNING_PUBKEY_PEM;  // only accept updates signed with this key
 #endif
+#ifdef OTTER_CA_PEM
+  config.caCert = OTTER_CA_PEM;  // for an https:// server, e.g. Caddy's local CA
+#endif
   otter.begin(config);
 }
 

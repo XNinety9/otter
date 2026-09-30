@@ -303,9 +303,12 @@ Deployment options:
   it, the ESP-IDF certificate bundle is used, which covers public certificates such as Let's
   Encrypt but not a private CA. Validated on an ESP32-C6 with Caddy's local CA: check-ins and
   OTA updates over HTTPS, at the same speed as plain HTTP (~220 KB/s).
-- **Arduino library**: plain HTTP for now (#17). On ESP32 it enrolls and keeps its token in NVS,
-  and checks signatures (`config.signingKey`); an ESP8266 keeps using the fleet key and can't
-  check signatures (given a key, it refuses every update).
+- **Arduino library**: an `https://` server needs `config.caCert` (the example takes
+  `OTTER_CA_CERT` at build time); the certificate is always checked. Validated on an ESP32-C6
+  (Arduino core 3) with Caddy's local CA: check-ins, commands and a signed OTA update. On ESP32
+  it enrolls and keeps its token in NVS, and checks signatures (`config.signingKey`); an ESP8266
+  keeps using the fleet key, can't check signatures (given a key, it refuses every update), and
+  needs its clock set (`configTime()`) for TLS. ESP8266 over HTTPS isn't tested on hardware yet.
 
 Devices must verify the server's certificate: TLS without verification still lets anyone on
 the network impersonate the server.

@@ -2,9 +2,12 @@
 
 #include <ArduinoJson.h>
 
+#include <memory>
+
 #if defined(ESP8266)
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
 #include <Updater.h>
 #include <bearssl/bearssl_hash.h>
 #define OTTER_DEFAULT_HW "esp8266"
@@ -13,6 +16,7 @@
 #include <Preferences.h>
 #include <Update.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <mbedtls/base64.h>
@@ -118,6 +122,37 @@ const char *verifySignature(const char *pem, const uint8_t digest[32], const Str
   (void)pem, (void)digest, (void)signature;
   return "signatures aren't supported on ESP8266 yet";
 #endif
+}
+
+// A TLS client that trusts only the given CA certificate.
+class SecureClient : public WiFiClientSecure {
+ public:
+  explicit SecureClient(const char *caCert) {
+#if defined(ESP8266)
+    if (caCert) {
+      _anchors.reset(new BearSSL::X509List(caCert));
+      setTrustAnchors(_anchors.get());
+    }
+    setBufferSizes(4096, 1024);  // RAM is short: most servers accept a smaller fragment length
+#else
+    if (caCert) setCACert(caCert);
+#endif
+  }
+
+#if defined(ESP8266)
+ private:
+  std::unique_ptr<BearSSL::X509List> _anchors;
+#endif
+};
+
+// Opens url on the plain or the TLS client. https:// always checks the server's certificate.
+bool open(HTTPClient &http, WiFiClient &plain, WiFiClient &secure, const String &url, const char *caCert) {
+  if (!url.startsWith("https://")) return http.begin(plain, url);
+  if (!caCert) {
+    OTTER_LOG("%s: set config.caCert to reach an https:// server", url.c_str());
+    return false;
+  }
+  return http.begin(secure, url);
 }
 
 // Modem sleep off while it matters (a check-in on a weak link, a download), then back.
@@ -346,9 +381,10 @@ void OtterAgent::saveToken(const String &token) {
 }
 
 int OtterAgent::post(const String &path, const String &body, String *response, uint32_t timeoutMs) {
-  WiFiClient client;
+  WiFiClient plain;
+  SecureClient secure(_cfg.caCert);
   HTTPClient http;
-  if (!http.begin(client, String(_cfg.server) + path)) return -1;
+  if (!open(http, plain, secure, String(_cfg.server) + path, _cfg.caCert)) return -1;
   http.setTimeout(timeoutMs > 65000 ? 65000 : timeoutMs);
   http.addHeader("Content-Type", "application/json");
   authenticate(http);
@@ -505,9 +541,10 @@ const char *OtterAgent::flash(const Order &order, bool &cancelled) {
       break;
     }
     if (connection) OTTER_LOG("download stalled at %u bytes, resuming (%d/%d)", (unsigned)received, connection, kMaxResumes);
-    WiFiClient client;
+    WiFiClient plain;
+    SecureClient secure(_cfg.caCert);
     HTTPClient http;
-    if (!http.begin(client, order.url)) {
+    if (!open(http, plain, secure, order.url, _cfg.caCert)) {
       err = "bad firmware URL";
       break;
     }
