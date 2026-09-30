@@ -21,6 +21,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+#include "mdns.h"
 #include "mbedtls/pk.h"
 #include "nvs.h"
 #include "psa/crypto.h"
@@ -105,6 +106,72 @@ static esp_http_client_handle_t new_client(const char *url, esp_http_client_meth
     return client;
 }
 
+/* --- Server discovery (mDNS) ---------------------------------------------- */
+
+/* Without a configured server_url, the server advertised on the LAN as _otter._tcp (#19). */
+static char s_discovered_url[160];
+static int s_failed_checkins; /* in a row: the server may have moved, look for it again */
+#define REDISCOVER_AFTER 3
+
+static const char *server_url(void)
+{
+    return s_cfg.server_url && s_cfg.server_url[0] ? s_cfg.server_url : s_discovered_url;
+}
+
+static bool discover_server(void)
+{
+    static bool mdns_ready;
+    if (!mdns_ready) {
+        if (mdns_init() != ESP_OK) {
+            ESP_LOGE(TAG, "mDNS init failed");
+            return false;
+        }
+        mdns_ready = true;
+    }
+    mdns_result_t *results = NULL;
+    /* Ask for unicast answers first: right after joining the network, multicast answers often
+     * don't reach us (access points forward multicast only once they've seen our group join). */
+    static const mdns_query_transmission_type_t modes[] = {MDNS_QUERY_UNICAST, MDNS_QUERY_UNICAST,
+                                                           MDNS_QUERY_MULTICAST};
+    for (int attempt = 0; attempt < 3 && !results; attempt++) {
+        if (mdns_query_generic(NULL, "_otter", "_tcp", MDNS_TYPE_PTR, modes[attempt], 2000, 4, &results) != ESP_OK) {
+            results = NULL;
+        }
+    }
+    if (!results) {
+        ESP_LOGW(TAG, "no Otter server found over mDNS");
+        return false;
+    }
+    s_discovered_url[0] = '\0';
+    for (mdns_result_t *r = results; r && !s_discovered_url[0]; r = r->next) {
+        /* The server's public URL when it has one (e.g. https:// behind a proxy)... */
+        for (size_t i = 0; i < r->txt_count; i++) {
+            if (strcmp(r->txt[i].key, "url") == 0 && r->txt[i].value && r->txt[i].value[0]) {
+                snprintf(s_discovered_url, sizeof(s_discovered_url), "%s", r->txt[i].value);
+            }
+        }
+        /* ...else its address and port. */
+        for (mdns_ip_addr_t *a = r->addr; a && !s_discovered_url[0]; a = a->next) {
+            if (a->addr.type == ESP_IPADDR_TYPE_V4) {
+                snprintf(s_discovered_url, sizeof(s_discovered_url), "http://" IPSTR ":%u",
+                         IP2STR(&a->addr.u_addr.ip4), r->port);
+            }
+        }
+        /* An answer can come without the address record: ask for it. */
+        esp_ip4_addr_t ip;
+        if (!s_discovered_url[0] && r->hostname && r->port && mdns_query_a(r->hostname, 2000, &ip) == ESP_OK) {
+            snprintf(s_discovered_url, sizeof(s_discovered_url), "http://" IPSTR ":%u", IP2STR(&ip), r->port);
+        }
+    }
+    mdns_query_results_free(results);
+    if (s_discovered_url[0]) {
+        ESP_LOGI(TAG, "server found over mDNS: %s", s_discovered_url);
+    } else {
+        ESP_LOGW(TAG, "Otter server answered over mDNS without a usable address");
+    }
+    return s_discovered_url[0] != '\0';
+}
+
 /* POSTs a JSON body to server_url + path. Returns the HTTP status, or -1 on network
  * error. The response body is stored in resp when given. With keep, the connection is
  * kept open in *keep for the next call (close it with close_kept()). */
@@ -112,7 +179,7 @@ static int post_json(const char *path, const char *body, char *resp, size_t resp
                      esp_http_client_handle_t *keep)
 {
     char url[256];
-    snprintf(url, sizeof(url), "%s%s", s_cfg.server_url, path);
+    snprintf(url, sizeof(url), "%s%s", server_url(), path);
     bool reused = keep && *keep;
     esp_http_client_handle_t client = reused ? *keep : new_client(url, HTTP_METHOD_POST, timeout_ms);
     if (!client) {
@@ -560,6 +627,9 @@ bool otter_config_get_str(const char *key, char *buf, size_t size, const char *d
 static bool checkin(update_order_t *order)
 {
     order->deployment_id = 0;
+    if (!server_url()[0] && !discover_server()) {
+        return false;
+    }
     char *body = build_checkin_body();
     char *resp = malloc(RESPONSE_MAX);
     if (!body || !resp) {
@@ -572,6 +642,12 @@ static bool checkin(update_order_t *order)
     free(body);
 
     bool reached = false;
+    if (status == 200) {
+        s_failed_checkins = 0;
+    } else if (status < 0 && !(s_cfg.server_url && s_cfg.server_url[0]) && ++s_failed_checkins >= REDISCOVER_AFTER) {
+        s_failed_checkins = 0;
+        s_discovered_url[0] = '\0'; /* look for the server again at the next check-in */
+    }
     cJSON *root = status == 200 ? cJSON_Parse(resp) : NULL;
     if (root) {
         reached = true;
@@ -929,8 +1005,7 @@ esp_err_t otter_mark_valid(void)
 /* Common to otter_start() and otter_checkin_once(). */
 static esp_err_t init(const otter_config_t *config)
 {
-    ESP_RETURN_ON_FALSE(config && config->server_url && config->app_name, ESP_ERR_INVALID_ARG, TAG,
-                        "server_url and app_name are required");
+    ESP_RETURN_ON_FALSE(config && config->app_name, ESP_ERR_INVALID_ARG, TAG, "app_name is required");
     ESP_RETURN_ON_FALSE(!s_started, ESP_ERR_INVALID_STATE, TAG, "the agent is already started");
     s_cfg = *config;
     if (!s_cfg.hw) {
@@ -955,7 +1030,7 @@ static esp_err_t init(const otter_config_t *config)
     }
 
     ESP_LOGI(TAG, "agent started: %s %s on %s, server %s", s_cfg.app_name, s_cfg.version, s_cfg.hw,
-             s_cfg.server_url);
+             server_url()[0] ? server_url() : "to be found over mDNS");
     s_started = true;
     notify_config(); /* the saved configuration applies from boot, even offline */
     return ESP_OK;

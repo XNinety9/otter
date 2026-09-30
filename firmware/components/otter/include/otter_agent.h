@@ -15,7 +15,9 @@ extern "C" {
 #endif
 
 typedef struct {
-    /* Required. Base URL without trailing slash, e.g. "http://192.168.1.10:8000". */
+    /* Base URL without trailing slash, e.g. "http://192.168.1.10:8000". NULL or "": find the
+     * server on the LAN over mDNS (_otter._tcp, the server needs OTTER_MDNS=1), again after
+     * 3 failed check-ins in a row in case it moved. */
     const char *server_url;
     /* Required. Application name, must match the firmware's app in Otter. */
     const char *app_name;

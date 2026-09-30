@@ -13,6 +13,7 @@ from . import api_auth, api_device, api_rollouts, api_ui, config
 from .auth import require_user
 from .db import engine
 from .events import broadcaster, wakeups
+from .mdns import advertiser
 from .metrics import REGISTRY
 from .migrate import upgrade_database
 from .mqtt import bridge
@@ -51,12 +52,14 @@ async def lifespan(_: FastAPI):
     notifier.seed_offline()
     notifier.start()
     bridge.start()
+    await advertiser.start()
     tasks = [asyncio.create_task(watch_offline_devices_forever())]
     if config.ROLLOUT_TICK_S > 0:
         tasks.append(asyncio.create_task(evaluate_rollouts_forever()))
     yield
     for task in tasks:
         task.cancel()
+    await advertiser.stop()
     bridge.stop()
     notifier.stop()
 

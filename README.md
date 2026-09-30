@@ -60,6 +60,8 @@ Open http://localhost:8000.
 | `OTTER_FLEET_KEY`        | *(empty)*      | Shared secret devices enroll with (`X-Otter-Key`)        |
 | `OTTER_DEVICE_APPROVAL`  | *(off)*        | `1`: new devices wait for an approval in the dashboard   |
 | `OTTER_SIGNING_PUBLIC_KEY` | *(none)*     | Refuse firmware uploads not signed with this key         |
+| `OTTER_MDNS`             | *(off)*        | `1`: advertise the server on the LAN (`_otter._tcp`)     |
+| `OTTER_MDNS_PORT`        | `8000`         | Port advertised (without `OTTER_PUBLIC_URL`)             |
 | `OTTER_PUBLIC_URL`       | *(from request)* | Base URL put in download links, e.g. `http://10.0.0.5:8000` |
 
 ## Run with Docker
@@ -208,7 +210,14 @@ cd firmware/examples/arduino
 pio run -e esp8266 -t upload -t monitor
 ```
 
-The device shows up in the dashboard within seconds. To ship an update, bump the version
+The device shows up in the dashboard within seconds.
+
+**Without `OTTER_SERVER`**, the ESP-IDF agent finds the server on the LAN over mDNS, if it runs
+with `OTTER_MDNS=1`: then the server's IP can change without reflashing anything. Devices look
+for it again after 3 failed check-ins in a row. The advertisement carries `OTTER_PUBLIC_URL` when
+set (e.g. an `https://` name behind Caddy), else the host's addresses and `OTTER_MDNS_PORT`.
+Multicast doesn't leave Docker's default bridge network: run Otter on the host, or with
+`network_mode: host`, for this to work (and let the host's firewall accept Otter's port). To ship an update, bump the version
 (`PROJECT_VER` in the ESP-IDF example's `CMakeLists.txt`, `[otter] version` in the Arduino
 `platformio.ini`), rebuild, push the image and deploy it from the UI:
 
