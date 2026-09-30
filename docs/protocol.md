@@ -90,7 +90,9 @@ or, when an update is scheduled for this device:
     "url": "http://otter.local:8000/api/v1/firmwares/4/download",
     "size": 912384,
     "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-    "signature": "MEUCIQ…"         // base64, when the image was signed (see Security)
+    "signature": "MEUCIQ…",        // base64, when the image was signed (see Security)
+    "compressed": { … },           // optional, see "Firmware download"
+    "delta": { … }                 // optional, see "Firmware download"
   }
 }
 ```
@@ -254,6 +256,17 @@ images shrink by about 40 %). An agent that can inflate downloads that instead a
 while writing (the ESP-IDF agent uses the ROM's `tinfl`, with a 32 KB window); `size` and
 `sha256` still describe the image itself. Ranges count compressed bytes, so a resumed download
 continues the stream where it stopped.
+
+When the device runs an image Otter has (same app, hardware and version as it reports), the order
+may also offer a patch from it, made with detools (heatshrink compression), when it is less than
+half the compressed image, at the first attempt only:
+`"delta": {"url": "…/delta?base=12", "size": 19693, "base_hash": "…", "format": "detools-heatshrink"}`.
+`base_hash` is the SHA-256 the base image carries at its end, which is what
+`esp_partition_get_sha256()` returns for the running partition: the agent uses the patch only
+if they match (an image flashed by other means differs), reading the running image as the patch
+source and writing the result like a downloaded image, which it then verifies with `sha256` and
+the signature as usual. A patch that fails reports `delta patch failed`, which is retried with
+the whole image.
 
 A device can resume an interrupted download with `Range: bytes=<offset>-`: the server answers
 `206 Partial Content` with the rest of the image. On a weak Wi-Fi link, a connection that

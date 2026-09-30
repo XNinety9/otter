@@ -76,6 +76,15 @@ class UpdateOrder(BaseModel):
     signature: str | None = None  # base64 signature of the image, when it was signed
     # The same image, zlib-compressed: agents that can inflate download this instead (#25).
     compressed: "CompressedImage | None" = None
+    # A patch from the image the device runs, when it runs one Otter knows (#26).
+    delta: "DeltaPatch | None" = None
+
+
+class DeltaPatch(BaseModel):
+    url: str
+    size: int
+    base_hash: str  # the image the patch applies to, as the device hashes its running image
+    format: Literal["detools-heatshrink"] = "detools-heatshrink"
 
 
 class CompressedImage(BaseModel):

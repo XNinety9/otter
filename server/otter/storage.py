@@ -50,6 +50,7 @@ def store_firmware(src: BinaryIO) -> tuple[str, int]:
 def delete_firmware_file(sha256: str) -> None:
     firmware_path(sha256).unlink(missing_ok=True)
     compressed_path(sha256).unlink(missing_ok=True)
+    delete_deltas(sha256)
 
 
 def image_elf_sha256(image: Path) -> str | None:
@@ -120,3 +121,48 @@ def compress_firmware(sha256: str, size: int) -> int | None:
         tmp.write(packed)
     os.replace(tmp.name, compressed_path(sha256))
     return len(packed)
+
+
+# --- Delta updates (#26) -----------------------------------------------------------
+
+# Byte of the ESP32 image header saying whether a SHA-256 of the image follows it.
+HASH_APPENDED_OFFSET = 23
+
+
+def image_hash(sha256: str) -> str | None:
+    """The hash an ESP32 image carries at its end, which is what a device computes for the image
+    it runs (esp_partition_get_sha256): it tells whether the device runs exactly this image."""
+    path = firmware_path(sha256)
+    with path.open("rb") as f:
+        header = f.read(24)
+        if len(header) < 24 or header[0] != ESP_IMAGE_MAGIC or header[HASH_APPENDED_OFFSET] != 1:
+            return None
+        f.seek(-32, os.SEEK_END)
+        return f.read(32).hex()
+
+
+def delta_path(base_sha256: str, sha256: str) -> Path:
+    return config.FIRMWARE_DIR / "deltas" / f"{base_sha256}-{sha256}.patch"
+
+
+def delta_size(base_sha256: str, sha256: str) -> int:
+    """Size of the patch turning the base image into this one, made (and kept) if needed."""
+    import detools  # only needed here
+
+    path = delta_path(base_sha256, sha256)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            firmware_path(base_sha256).open("rb") as base,
+            firmware_path(sha256).open("rb") as new,
+            tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp,
+        ):
+            detools.create_patch(base, new, tmp, compression="heatshrink")
+        os.replace(tmp.name, path)
+    return path.stat().st_size
+
+
+def delete_deltas(sha256: str) -> None:
+    for path in (config.FIRMWARE_DIR / "deltas").glob("*.patch"):
+        if sha256 in path.stem.split("-"):
+            path.unlink(missing_ok=True)

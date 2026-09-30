@@ -25,6 +25,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+#include "esp_delta_ota.h"
 #include "miniz.h" /* tinfl, in ROM */
 #include "mdns.h"
 #include "mbedtls/pk.h"
@@ -58,6 +59,9 @@ typedef struct {
     size_t signature_len;         /* 0: unsigned */
     char compressed_url[256];     /* the same image, zlib-compressed ("": none offered) */
     int compressed_size;
+    char delta_url[256];          /* a patch from the running image ("": none offered) */
+    int delta_size;
+    char delta_base_hash[65];     /* the image the patch applies to */
 } update_order_t;
 
 static otter_config_t s_cfg;
@@ -767,6 +771,17 @@ static bool checkin(update_order_t *order)
                 copy_string(compressed, "url", order->compressed_url, sizeof(order->compressed_url));
                 order->compressed_size = compressed_size->valueint;
             }
+            cJSON *delta = cJSON_GetObjectItem(update, "delta");
+            cJSON *delta_size = cJSON_GetObjectItem(delta, "size");
+            cJSON *delta_format = cJSON_GetObjectItem(delta, "format");
+            order->delta_url[0] = '\0';
+            order->delta_size = 0;
+            if (cJSON_IsNumber(delta_size) && cJSON_IsString(delta_format) &&
+                strcmp(delta_format->valuestring, "detools-heatshrink") == 0) {
+                copy_string(delta, "url", order->delta_url, sizeof(order->delta_url));
+                copy_string(delta, "base_hash", order->delta_base_hash, sizeof(order->delta_base_hash));
+                order->delta_size = delta_size->valueint;
+            }
             cJSON *signature = cJSON_GetObjectItem(update, "signature");
             order->signature_len = 0;
             if (cJSON_IsString(signature) &&
@@ -853,7 +868,10 @@ typedef struct {
     tinfl_decompressor *inflator; /* NULL: the transfer is the plain image */
     uint8_t *dict;                /* TINFL_LZ_DICT_SIZE bytes: the inflate window */
     size_t dict_ofs;
-    bool inflated; /* the compressed stream ended */
+    bool inflated;                /* the compressed stream ended */
+    esp_delta_ota_handle_t delta; /* the transfer is a patch against the running image (#26) */
+    const esp_partition_t *running;
+    const char *delta_err;        /* why writing the patched image failed */
 } sink_t;
 
 static const char *sink_image(sink_t *s, const uint8_t *data, size_t n)
@@ -869,9 +887,42 @@ static const char *sink_image(sink_t *s, const uint8_t *data, size_t n)
     return NULL;
 }
 
+/* The patch reads the running image and writes the new one. */
+static esp_err_t delta_read(uint8_t *buf, size_t size, int offset, void *sink)
+{
+    return esp_partition_read(((sink_t *)sink)->running, offset, buf, size);
+}
+
+static esp_err_t delta_write(const uint8_t *buf, size_t size, void *sink)
+{
+    sink_t *s = sink;
+    s->delta_err = sink_image(s, buf, size);
+    return s->delta_err ? ESP_FAIL : ESP_OK;
+}
+
+/* Whether the device runs the image a patch applies to. */
+static bool runs_image(const char *image_hash)
+{
+    uint8_t digest[32];
+    char hex[65];
+    if (esp_partition_get_sha256(esp_ota_get_running_partition(), digest) != ESP_OK) {
+        return false;
+    }
+    for (int i = 0; i < 32; i++) {
+        sprintf(&hex[i * 2], "%02x", digest[i]);
+    }
+    return strcasecmp(hex, image_hash) == 0;
+}
+
 /* more: bytes of the transfer are still to come after these. */
 static const char *sink_transfer(sink_t *s, const uint8_t *in, size_t n, bool more)
 {
+    if (s->delta) {
+        if (esp_delta_ota_feed_patch(s->delta, in, n) != ESP_OK) {
+            return s->delta_err ? s->delta_err : "delta patch failed";
+        }
+        return NULL;
+    }
     if (!s->inflator) {
         return sink_image(s, in, n);
     }
@@ -930,11 +981,25 @@ static void apply_update(const update_order_t *order)
     wifi_ps_type_t saved_ps = WIFI_PS_NONE;
     bool ps_changed = false;
 
-    /* A compressed transfer when offered: the device inflates it on the fly. */
-    const bool compressed = order->compressed_url[0] && order->compressed_size > 0;
-    const char *url = compressed ? order->compressed_url : order->url;
-    const int transfer_size = compressed ? order->compressed_size : order->size;
-    sink_t sink = {.sha = &sha, .image_size = order->size};
+    /* The smallest transfer offered: a patch from the running image (if it really runs the
+     * patch's base), else the compressed image, else the plain one. */
+    bool patched = order->delta_url[0] && order->delta_size > 0;
+    if (patched && !runs_image(order->delta_base_hash)) {
+        ESP_LOGW(TAG, "the patch offered is for another image than the running one: not using it");
+        patched = false;
+    }
+    const bool compressed = !patched && order->compressed_url[0] && order->compressed_size > 0;
+    const char *url = patched ? order->delta_url : compressed ? order->compressed_url : order->url;
+    const int transfer_size = patched ? order->delta_size : compressed ? order->compressed_size : order->size;
+    sink_t sink = {.sha = &sha, .image_size = order->size, .running = esp_ota_get_running_partition()};
+    if (patched) {
+        esp_delta_ota_cfg_t cfg = {
+            .user_data = &sink,
+            .read_cb_with_user_data = delta_read,
+            .write_cb_with_user_data = delta_write,
+        };
+        sink.delta = esp_delta_ota_init(&cfg);
+    }
 
     const esp_partition_t *partition = esp_ota_get_next_update_partition(NULL);
     char *buf = malloc(CHUNK_SIZE);
@@ -949,7 +1014,7 @@ static void apply_update(const update_order_t *order)
         err = "no OTA partition";
         goto done;
     }
-    if (!buf || (compressed && (!sink.inflator || !sink.dict))) {
+    if (!buf || (compressed && (!sink.inflator || !sink.dict)) || (patched && !sink.delta)) {
         err = "out of memory";
         goto done;
     }
@@ -975,7 +1040,7 @@ static void apply_update(const update_order_t *order)
     }
 
     ESP_LOGI(TAG, "flash erase took %lld ms%s", (t_connect - t_start) / 1000,
-             compressed ? ", downloading it compressed" : "");
+             patched ? ", downloading a patch" : compressed ? ", downloading it compressed" : "");
 
     int64_t t_slice = 0, t_last_read = 0, max_gap = 0;
     int slice_start = 0, connections = 0;
@@ -1048,6 +1113,10 @@ static void apply_update(const update_order_t *order)
     }
 
     ESP_LOGI(TAG, "download done: %d bytes in %lld ms", received, (esp_timer_get_time() - t_start) / 1000);
+    if (sink.delta && esp_delta_ota_finalize(sink.delta) != ESP_OK) {
+        err = sink.delta_err ? sink.delta_err : "delta patch failed";
+        goto done;
+    }
     if (sink.written != order->size) {
         err = compressed && !sink.inflated ? "compressed image truncated" : "image smaller than announced";
         goto done;
@@ -1089,6 +1158,9 @@ done:
     free(buf);
     free(sink.inflator);
     free(sink.dict);
+    if (sink.delta) {
+        esp_delta_ota_deinit(sink.delta);
+    }
     psa_hash_abort(&sha);
     if (ps_changed) {
         esp_wifi_set_ps(saved_ps);
