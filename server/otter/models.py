@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 from sqlalchemy import Column, ForeignKey, String, Table, UniqueConstraint
@@ -110,6 +111,10 @@ class Firmware(Base):
     uploaded_at: Mapped[datetime] = mapped_column(default=utcnow)
     channel: Mapped[str | None]  # release channel it is published on; None = unpublished
     signature: Mapped[str | None]  # base64, made with the builder's private key (see signing.py)
+    # SHA-256 of the ELF file the image was built from (read from ESP32 images), and whether
+    # that ELF was uploaded: crash reports are then decoded (#24).
+    elf_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    has_elf: Mapped[bool] = mapped_column(default=False, server_default="0")
 
     @property
     def signed(self) -> bool:
@@ -228,3 +233,27 @@ class ConfigValue(Base):
     tag: Mapped[str | None] = mapped_column(String(32), index=True)
     key: Mapped[str] = mapped_column(String(32))
     value: Mapped[str]  # JSON: a string, number or boolean
+
+
+class Crash(Base):
+    """A crash report (#24): the core dump summary a device sent after restarting from a crash."""
+
+    __tablename__ = "crashes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True)
+    firmware_id: Mapped[int | None] = mapped_column(ForeignKey("firmwares.id", ondelete="SET NULL"), index=True)
+    elf_sha256: Mapped[str]  # as reported: often a prefix
+    fw_version: Mapped[str | None]  # of the crashed firmware when known, else what the device runs
+    task: Mapped[str | None]
+    reason: Mapped[str | None]
+    report: Mapped[str]  # JSON, as sent (registers, backtrace, stack words)
+    frames: Mapped[str]  # JSON: decoded call stack, see symbols.Symbolizer.frame
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    device: Mapped[Device] = relationship()
+    firmware: Mapped[Firmware | None] = relationship()
+
+    @property
+    def decoded(self) -> bool:
+        return any(frame.get("function") for frame in json.loads(self.frames))

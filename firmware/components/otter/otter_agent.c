@@ -9,6 +9,10 @@
 #include "cJSON.h"
 #include "esp_app_desc.h"
 #include "esp_check.h"
+#include "esp_idf_version.h"
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+#include "esp_core_dump.h"
+#endif
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -345,13 +349,17 @@ static void copy_string(cJSON *obj, const char *key, char *dst, size_t size)
     }
 }
 
-static char *build_checkin_body(void)
+static void mac_string(char out[18])
 {
     uint8_t mac[6];
-    char mac_str[18];
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(mac_str, sizeof(mac_str), "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4],
-             mac[5]);
+    snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+static char *build_checkin_body(void)
+{
+    char mac_str[18];
+    mac_string(mac_str);
 
     cJSON *obj = cJSON_CreateObject();
     cJSON_AddStringToObject(obj, "mac", mac_str);
@@ -620,6 +628,78 @@ bool otter_config_get_str(const char *key, char *buf, size_t size, const char *d
     }
     return found;
 }
+
+/* --- Crash reports ---------------------------------------------------------- */
+
+/* ELF is the only core dump format from ESP-IDF 6; the summary needs it. */
+#if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH && (ESP_IDF_VERSION_MAJOR >= 6 || CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF)
+/* After a crash, sends the core dump's summary to Otter, which decodes it with the firmware's
+ * ELF file (#24), then erases it. Once per boot, after the first check-in that reached it. */
+static void report_crash(void)
+{
+    static bool done;
+    if (done) {
+        return;
+    }
+    done = true;
+    if (esp_core_dump_image_check() != ESP_OK) {
+        return; /* no core dump (or an unreadable one) */
+    }
+    esp_core_dump_summary_t *summary = calloc(1, sizeof(*summary));
+    if (!summary || esp_core_dump_get_summary(summary) != ESP_OK) {
+        free(summary);
+        esp_core_dump_image_erase();
+        return;
+    }
+    cJSON *obj = cJSON_CreateObject();
+    cJSON_AddStringToObject(obj, "elf_sha256", (const char *)summary->app_elf_sha256);
+    cJSON_AddStringToObject(obj, "task", summary->exc_task);
+    cJSON_AddNumberToObject(obj, "pc", summary->exc_pc);
+    char reason[160];
+    if (esp_core_dump_get_panic_reason(reason, sizeof(reason)) == ESP_OK) {
+        cJSON_AddStringToObject(obj, "reason", reason);
+    }
+#if CONFIG_IDF_TARGET_ARCH_XTENSA
+    cJSON *bt = cJSON_AddArrayToObject(obj, "backtrace");
+    for (uint32_t i = 0; i < summary->exc_bt_info.depth; i++) {
+        cJSON_AddItemToArray(bt, cJSON_CreateNumber(summary->exc_bt_info.bt[i]));
+    }
+    cJSON_AddBoolToObject(obj, "backtrace_corrupted", summary->exc_bt_info.corrupted);
+#else
+    /* RISC-V: no unwinding on the device; the server finds the callers in the stack words. */
+    cJSON *regs = cJSON_AddObjectToObject(obj, "registers");
+    cJSON_AddNumberToObject(regs, "ra", summary->ex_info.ra);
+    cJSON_AddNumberToObject(regs, "sp", summary->ex_info.sp);
+    cJSON_AddNumberToObject(regs, "mcause", summary->ex_info.mcause);
+    cJSON_AddNumberToObject(regs, "mtval", summary->ex_info.mtval);
+    cJSON *stack = cJSON_AddArrayToObject(obj, "stack");
+    const uint32_t *words = (const uint32_t *)summary->exc_bt_info.stackdump;
+    for (uint32_t i = 0; i < summary->exc_bt_info.dump_size / 4; i++) {
+        cJSON_AddItemToArray(stack, cJSON_CreateNumber(words[i]));
+    }
+#endif
+    free(summary);
+    char *body = cJSON_PrintUnformatted(obj);
+    cJSON_Delete(obj);
+
+    char path[64] = "/api/v1/crashes";
+    if (!s_token[0]) { /* with the fleet key, name the device */
+        char mac[18];
+        mac_string(mac);
+        snprintf(path, sizeof(path), "/api/v1/crashes?mac=%s", mac);
+    }
+    int status = body ? post_json(path, body, NULL, 0, HTTP_TIMEOUT_MS, NULL) : -1;
+    free(body);
+    if (status == 200 || status == 404 || status == 422) {
+        esp_core_dump_image_erase(); /* delivered, or never will be */
+        ESP_LOGI(TAG, "crash report sent (HTTP %d)", status);
+    } else {
+        done = false; /* try again at the next check-in */
+    }
+}
+#else
+static void report_crash(void) {}
+#endif
 
 /* --- Check-in (continued) ------------------------------------------------- */
 
@@ -952,6 +1032,9 @@ static void otter_task(void *arg)
     while (true) {
         int64_t started = esp_timer_get_time();
         bool reached = checkin(&order);
+        if (reached) {
+            report_crash();
+        }
 
         if (s_pending_verify) {
             if (reached && !s_cfg.manual_mark_valid) {
@@ -1097,6 +1180,9 @@ static esp_err_t checkin_rounds(void)
     for (int round = 0; round < 5; round++) {
         update_order_t order;
         bool reached = checkin(&order);
+        if (reached) {
+            report_crash();
+        }
         if (s_pending_verify) {
             one_shot_verify(reached);
             if (reached && !s_cfg.manual_mark_valid) {

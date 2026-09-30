@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import commands, config, devconfig
+from . import commands, config, crashes, devconfig
 from .auth import token_hash
 from .db import SessionLocal, get_session, utcnow
 from .device_auth import DeviceAuth, authenticate, check_access, new_token
@@ -18,7 +18,7 @@ from .events import broadcaster, wakeups
 from .metrics import CHECKINS, CRASHES, DOWNLOAD_BYTES, DOWNLOADS
 from .notify import notifier
 from .models import CRASH_RESETS, Command, Deployment, Device, Firmware
-from .schemas import CheckinIn, CheckinOut, CommandResultIn, ConfigOrder, DeviceOut, ProgressIn, UpdateOrder
+from .schemas import CheckinIn, CheckinOut, CommandResultIn, ConfigOrder, CrashIn, DeviceOut, ProgressIn, UpdateOrder
 from .storage import firmware_path
 
 
@@ -173,6 +173,32 @@ def restarted(device: Device, body: CheckinIn) -> bool:
     if body.boot_count is not None and device.boot_count is not None:
         return body.boot_count != device.boot_count
     return body.uptime_s is not None and device.uptime_s is not None and body.uptime_s < device.uptime_s
+
+
+@router.post("/crashes")
+def report_crash(
+    body: CrashIn,
+    mac: str | None = None,
+    auth: DeviceAuth = Depends(authenticate),
+    session: Session = Depends(get_session),
+):
+    """A core dump summary, sent at the first check-in after a crash (#24). A device using the
+    fleet key names itself with ?mac=."""
+    if auth.device_id is not None:
+        device = session.get(Device, auth.device_id)
+    else:
+        try:
+            normalized = CheckinIn.normalize_mac(mac or "")
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        device = session.scalar(select(Device).where(Device.mac == normalized))
+        if device is None:
+            raise HTTPException(404, "unknown device")
+        check_access(auth, device)
+    crash = crashes.record(session, device, body)
+    session.commit()
+    broadcaster.publish("crash", {"device_id": device.id, "id": crash.id})
+    return {"ok": True, "decoded": crash.decoded}
 
 
 @router.post("/commands/{command_id}/result")
