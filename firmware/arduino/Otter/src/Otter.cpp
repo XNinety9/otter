@@ -10,9 +10,13 @@
 #define OTTER_DEFAULT_HW "esp8266"
 #elif defined(ESP32)
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <Update.h>
 #include <WiFi.h>
 #include <esp_system.h>
+#include <esp_wifi.h>
+#include <mbedtls/base64.h>
+#include <mbedtls/pk.h>
 #include <mbedtls/sha256.h>
 #include <sdkconfig.h>
 #define OTTER_DEFAULT_HW CONFIG_IDF_TARGET
@@ -36,25 +40,26 @@ const char *resetReason() {
     default: return "unknown";
   }
 #else
-  switch (esp_reset_reason()) {
-    case ESP_RST_POWERON: return "power_on";
-    case ESP_RST_EXT: return "external";
-    case ESP_RST_SW: return "software";
-    case ESP_RST_PANIC: return "panic";
-    case ESP_RST_INT_WDT: return "int_watchdog";
-    case ESP_RST_TASK_WDT: return "task_watchdog";
-    case ESP_RST_WDT: return "watchdog";
-    case ESP_RST_DEEPSLEEP: return "deep_sleep";
-    case ESP_RST_BROWNOUT: return "brownout";
-    case ESP_RST_SDIO: return "sdio";
-    default: return "unknown";
-  }
+  // esp_reset_reason_t by value: its order is stable, and the newer names don't exist in
+  // every Arduino core.
+  static const char *const names[] = {
+      "unknown", "power_on", "external", "software", "panic", "int_watchdog", "task_watchdog", "watchdog",
+      "deep_sleep", "brownout", "sdio", "usb", "jtag", "efuse", "power_glitch", "cpu_lockup",
+  };
+  unsigned reason = static_cast<unsigned>(esp_reset_reason());
+  return reason < sizeof(names) / sizeof(names[0]) ? names[reason] : "unknown";
 #endif
 }
 
 constexpr uint32_t kRetryMs = 10000;
 constexpr uint32_t kHttpTimeoutMs = 15000;
+// Longest long poll: HTTPClient's timeout is a uint16_t in milliseconds.
+constexpr uint32_t kMaxWaitS = 45;
 constexpr size_t kChunkSize = 1024;
+// A download receiving nothing for this long reconnects and resumes, at most kMaxResumes
+// times: with the cores' small TCP window, a stalled connection rarely recovers on a weak link.
+constexpr uint32_t kStallMs = 8000;
+constexpr int kMaxResumes = 10;
 
 #if defined(ESP8266)
 class Sha256 {
@@ -90,19 +95,123 @@ void abortUpdate() {
 #endif
 }
 
+// Checks the image's signature (see "Signed firmware" in the README): nullptr when valid.
+const char *verifySignature(const char *pem, const uint8_t digest[32], const String &signature) {
+#if defined(ESP32)
+  unsigned char sig[512];
+  size_t len = 0;
+  if (mbedtls_base64_decode(sig, sizeof(sig), &len, reinterpret_cast<const unsigned char *>(signature.c_str()),
+                            signature.length()) != 0) {
+    return "invalid signature: malformed";
+  }
+  mbedtls_pk_context key;
+  mbedtls_pk_init(&key);
+  const char *err = nullptr;
+  if (mbedtls_pk_parse_public_key(&key, reinterpret_cast<const unsigned char *>(pem), strlen(pem) + 1) != 0) {
+    err = "firmware signing key unreadable";
+  } else if (mbedtls_pk_verify(&key, MBEDTLS_MD_SHA256, digest, 32, sig, len) != 0) {
+    err = "invalid signature: not signed with this device's key";
+  }
+  mbedtls_pk_free(&key);
+  return err;
+#else
+  (void)pem, (void)digest, (void)signature;
+  return "signatures aren't supported on ESP8266 yet";
+#endif
+}
+
+// Modem sleep off while it matters (a check-in on a weak link, a download), then back.
+class RadioAwake {
+ public:
+  RadioAwake() {
+#if defined(ESP32)
+    _changed = esp_wifi_get_ps(&_saved) == ESP_OK && _saved != WIFI_PS_NONE && esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK;
+#else
+    _saved = WiFi.getSleepMode();
+    _changed = _saved != WIFI_NONE_SLEEP && WiFi.setSleepMode(WIFI_NONE_SLEEP);
+#endif
+  }
+  ~RadioAwake() {
+#if defined(ESP32)
+    if (_changed) esp_wifi_set_ps(_saved);
+#else
+    if (_changed) WiFi.setSleepMode(_saved);
+#endif
+  }
+
+ private:
+#if defined(ESP32)
+  wifi_ps_type_t _saved = WIFI_PS_NONE;
+#else
+  WiFiSleepType_t _saved = WIFI_NONE_SLEEP;
+#endif
+  bool _changed = false;
+};
+
 }  // namespace
 
-void OtterAgent::begin(const Config &config) {
+void OtterAgent::setup(const Config &config) {
   _cfg = config;
   if (!_cfg.hw) _cfg.hw = OTTER_DEFAULT_HW;
   _waitMs = 0;
+#if defined(ESP32)
+  // The token from a previous boot (see "Authentication" in docs/protocol.md). The ESP8266
+  // keeps using the fleet key: without persistence it would lock itself out at its next boot.
+  Preferences prefs;
+  if (prefs.begin("otter", true)) {
+    _token = prefs.getString("token", "");
+    prefs.end();
+  }
+#endif
   OTTER_LOG("agent started: %s %s on %s, server %s", _cfg.app, _cfg.version, _cfg.hw, _cfg.server);
 }
 
-void OtterAgent::loop() {
-  if (WiFi.status() != WL_CONNECTED || millis() - _lastCheckin < _waitMs) return;
-  _lastCheckin = millis();
+void OtterAgent::begin(const Config &config) {
+  setup(config);
+#if defined(ESP32)
+  _longPoll = true;
+  TaskHandle_t handle = nullptr;
+  if (xTaskCreate(task, "otter", 12288, this, 5, &handle) == pdPASS) {
+    _task = handle;
+  } else {
+    _longPoll = false;  // fall back to loop()
+    OTTER_LOG("can't start the agent's task: use loop()");
+  }
+#endif
+}
 
+#if defined(ESP32)
+void OtterAgent::task(void *agent) {
+  auto *self = static_cast<OtterAgent *>(agent);
+  for (;;) {
+    if (WiFi.status() != WL_CONNECTED) {
+      delay(1000);
+      continue;
+    }
+    uint32_t waitMs = self->cycle();
+    if (waitMs) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(waitMs));  // checkinNow() ends the wait
+  }
+}
+#else
+void OtterAgent::task(void *) {}
+#endif
+
+void OtterAgent::loop() {
+  if (_task || WiFi.status() != WL_CONNECTED || millis() - _lastCheckin < _waitMs) return;
+  _lastCheckin = millis();
+  _waitMs = cycle();
+}
+
+void OtterAgent::checkinNow() {
+  _waitMs = 0;
+#if defined(ESP32)
+  if (_task) xTaskNotifyGive(static_cast<TaskHandle_t>(_task));
+#endif
+}
+
+// One check-in and what comes back. Returns how long to wait before the next one.
+uint32_t OtterAgent::cycle() {
+  uint32_t started = millis();
   Order order;
   bool reached = checkin(order);
   if (_rebootRequested) {
@@ -112,14 +221,47 @@ void OtterAgent::loop() {
   }
   if (order.deploymentId) {
     applyUpdate(order);  // only returns on failure or cancellation
-    _waitMs = 0;
-    return;
+    return 0;
   }
-  _waitMs = reached ? _intervalS * 1000UL : kRetryMs;
-  if (_checkinAgain) {  // commands came: the next ones may be right behind
+  if (!reached) return kRetryMs;
+  if (_checkinAgain) {  // commands or a configuration came: the next ones may be right behind
     _checkinAgain = false;
-    _waitMs = 0;
+    return 0;
   }
+  // A long-polling server already made us wait: poll again right away.
+  uint32_t elapsed = millis() - started, interval = _intervalS * 1000UL;
+  return elapsed >= interval ? 0 : interval - elapsed;
+}
+
+bool OtterAgent::checkinOnce(const Config &config, uint32_t nextCheckinS) {
+  setup(config);
+  _oneShot = true;
+  _nextCheckinS = nextCheckinS;
+  RadioAwake awake;  // awake for seconds only: on a weak link, answers got lost in modem sleep
+  bool reached = false;
+  // A few rounds: to confirm a configuration, fetch commands queued behind others, or check
+  // in again after a failed update.
+  for (int round = 0; round < 5; round++) {
+    Order order;
+    reached = checkin(order);
+    if (_rebootRequested) {
+      OTTER_LOG("rebooting, as asked from Otter");
+      delay(500);
+      ESP.restart();
+    }
+    if (order.deploymentId) {
+      applyUpdate(order);  // restarts into the new firmware, returns on failure
+      continue;
+    }
+    if (!reached && round == 0) {
+      OTTER_LOG("check-in failed, trying again in 2 s");  // a link that just woke up
+      delay(2000);
+      continue;
+    }
+    if (!reached || !_checkinAgain) break;
+    _checkinAgain = false;
+  }
+  return reached;
 }
 
 bool OtterAgent::onCommand(const char *name, CommandHandler handler) {
@@ -175,18 +317,41 @@ void OtterAgent::runCommand(int id, const char *name, const String &args) {
   if (message.length()) doc["message"] = message.substring(0, 200);
   String body;
   serializeJson(doc, body);
-  if (post("/api/v1/commands/" + String(id) + "/result", body, nullptr) != 200) {
+  if (post("/api/v1/commands/" + String(id) + "/result", body, nullptr, kHttpTimeoutMs) != 200) {
     OTTER_LOG("command %d: result not delivered", id);
   }
 }
 
-int OtterAgent::post(const String &path, const String &body, String *response) {
+void OtterAgent::authenticate(HTTPClient &http) {
+  if (_token.length()) {
+    http.addHeader("Authorization", "Bearer " + _token);
+  } else if (_cfg.fleetKey && *_cfg.fleetKey) {
+    http.addHeader("X-Otter-Key", _cfg.fleetKey);
+  }
+}
+
+void OtterAgent::saveToken(const String &token) {
+  _token = token;
+#if defined(ESP32)
+  Preferences prefs;
+  if (prefs.begin("otter", false)) {
+    if (token.length()) {
+      prefs.putString("token", token);
+    } else {
+      prefs.remove("token");
+    }
+    prefs.end();
+  }
+#endif
+}
+
+int OtterAgent::post(const String &path, const String &body, String *response, uint32_t timeoutMs) {
   WiFiClient client;
   HTTPClient http;
   if (!http.begin(client, String(_cfg.server) + path)) return -1;
-  http.setTimeout(kHttpTimeoutMs);
+  http.setTimeout(timeoutMs > 65000 ? 65000 : timeoutMs);
   http.addHeader("Content-Type", "application/json");
-  if (_cfg.fleetKey && *_cfg.fleetKey) http.addHeader("X-Otter-Key", _cfg.fleetKey);
+  authenticate(http);
   int code = http.POST(body);
   if (response && code > 0) *response = http.getString();
   http.end();
@@ -194,6 +359,7 @@ int OtterAgent::post(const String &path, const String &body, String *response) {
 }
 
 bool OtterAgent::checkin(Order &order) {
+  uint32_t waitS = _longPoll && !_oneShot ? std::min(_intervalS, kMaxWaitS) : 0;
   JsonDocument doc;
   doc["mac"] = WiFi.macAddress();
   doc["hw"] = _cfg.hw;
@@ -210,13 +376,21 @@ bool OtterAgent::checkin(Order &order) {
   // No boot_count: the server spots restarts from uptime_s going down.
   doc["reset_reason"] = resetReason();
   doc["config_version"] = _configVersion;  // "": none yet
+  doc["wait_s"] = waitS;
+  if (_nextCheckinS) doc["next_checkin_s"] = _nextCheckinS;
   String body;
   serializeJson(doc, body);
 
   String response;
-  int code = post("/api/v1/checkin", body, &response);
+  int code = post("/api/v1/checkin", body, &response, waitS * 1000 + kHttpTimeoutMs);
+  if (code == 401 && _token.length()) {
+    // Re-enrolled in Otter (or its database was reset): enroll again with the fleet key.
+    OTTER_LOG("token refused, enrolling again with the fleet key");
+    saveToken("");
+    return false;
+  }
   if (code != 200) {
-    OTTER_LOG("check-in failed (HTTP %d)", code);
+    OTTER_LOG("check-in failed (HTTP %d)%s%s", code, code == 403 ? ": " : "", code == 403 ? response.c_str() : "");
     return false;
   }
 
@@ -227,6 +401,14 @@ bool OtterAgent::checkin(Order &order) {
   }
   uint32_t interval = resp["checkin_interval_s"] | 0;
   if (interval > 0) _intervalS = interval;
+
+#if defined(ESP32)
+  const char *token = resp["token"] | "";
+  if (*token) {
+    saveToken(token);
+    OTTER_LOG("enrolled: this device now has its own token");
+  }
+#endif
 
   JsonObject config = resp["config"];
   if (!config.isNull() && config["values"].is<JsonObject>()) {
@@ -251,6 +433,7 @@ bool OtterAgent::checkin(Order &order) {
     order.version = update["version"] | "";
     order.url = update["url"] | "";
     order.sha256 = update["sha256"] | "";
+    order.signature = update["signature"] | "";
     order.size = update["size"] | 0;
     if (order.url.length() && order.sha256.length() == 64 && order.size > 0) {
       order.deploymentId = update["deployment_id"] | 0;
@@ -269,13 +452,19 @@ bool OtterAgent::report(int deploymentId, const char *state, int progress, const
   String body;
   serializeJson(doc, body);
 
-  int code = post(String("/api/v1/deployments/") + deploymentId + "/progress", body, nullptr);
+  int code = post(String("/api/v1/deployments/") + deploymentId + "/progress", body, nullptr, kHttpTimeoutMs);
   if (code != 200) OTTER_LOG("progress report got HTTP %d", code);
   return code != 409;  // 409: cancelled from the UI
 }
 
 void OtterAgent::applyUpdate(const Order &order) {
   OTTER_LOG("updating %s -> %s (%u bytes)", _cfg.version, order.version.c_str(), (unsigned)order.size);
+  if (_cfg.signingKey && !order.signature.length()) {
+    // No need to download it: it would be refused anyway.
+    OTTER_LOG("update failed: unsigned firmware refused");
+    report(order.deploymentId, "failed", 0, "unsigned firmware refused: this device only accepts signed images");
+    return;
+  }
   if (!report(order.deploymentId, "downloading", 0)) {
     OTTER_LOG("update cancelled by server");
     return;
@@ -301,69 +490,83 @@ void OtterAgent::applyUpdate(const Order &order) {
 
 // Streams the image into the OTA slot. Returns an error message, or nullptr on success.
 const char *OtterAgent::flash(const Order &order, bool &cancelled) {
-  WiFiClient client;
-  HTTPClient http;
-  if (!http.begin(client, order.url)) return "bad firmware URL";
-  http.setTimeout(kHttpTimeoutMs);
-  if (_cfg.fleetKey && *_cfg.fleetKey) http.addHeader("X-Otter-Key", _cfg.fleetKey);
-  if (http.GET() != 200) {
-    http.end();
-    return "firmware download refused";
-  }
-  if (!Update.begin(order.size)) {
-    http.end();
-    return "not enough space for the image";
-  }
+  RadioAwake awake;  // modem sleep caps the throughput
+  if (!Update.begin(order.size)) return "not enough space for the image";
 
-  auto *stream = http.getStreamPtr();
   uint8_t buf[kChunkSize];
   Sha256 sha;
   size_t received = 0;
   int lastReported = 0;
-  uint32_t lastData = millis();
   const char *err = nullptr;
 
-  while (received < order.size) {
-    size_t available = stream->available();
-    if (!available) {
-      if (!http.connected()) {
-        err = "connection lost";
-        break;
-      }
-      if (millis() - lastData > kHttpTimeoutMs) {
-        err = "download timeout";
-        break;
-      }
-      delay(1);
-      continue;
-    }
-    size_t n = stream->readBytes(buf, std::min({available, sizeof(buf), order.size - received}));
-    if (!n) continue;
-    lastData = millis();
-    if (Update.write(buf, n) != n) {
-      err = "flash write failed";
+  for (int connection = 0; received < order.size && !err && !cancelled; connection++) {
+    if (connection > kMaxResumes) {
+      err = "connection lost";
       break;
     }
-    sha.update(buf, n);
-    received += n;
+    if (connection) OTTER_LOG("download stalled at %u bytes, resuming (%d/%d)", (unsigned)received, connection, kMaxResumes);
+    WiFiClient client;
+    HTTPClient http;
+    if (!http.begin(client, order.url)) {
+      err = "bad firmware URL";
+      break;
+    }
+    http.setTimeout(kStallMs);
+    authenticate(http);
+    if (received) http.addHeader("Range", "bytes=" + String((unsigned)received) + "-");
+    int code = http.GET();
+    if (code != (received ? 206 : 200)) {
+      http.end();
+      if (code > 0) {
+        err = "firmware download refused";  // the server said no: trying again won't help
+      } else {
+        delay(1000);  // couldn't reach it: counts as a resume
+      }
+      continue;
+    }
 
-    int pct = received * 100 / order.size;
-    if (pct - lastReported >= 10 && received < order.size) {
-      lastReported = pct;
-      if (!report(order.deploymentId, "downloading", pct)) {
-        cancelled = true;
+    auto *stream = http.getStreamPtr();
+    uint32_t lastData = millis();
+    while (received < order.size) {
+      size_t available = stream->available();
+      if (!available) {
+        if (!http.connected() || millis() - lastData > kStallMs) break;  // resume on a new connection
+        delay(1);
+        continue;
+      }
+      size_t n = stream->readBytes(buf, std::min({available, sizeof(buf), order.size - received}));
+      if (!n) continue;
+      lastData = millis();
+      if (Update.write(buf, n) != n) {
+        err = "flash write failed";
         break;
       }
+      sha.update(buf, n);
+      received += n;
+
+      int pct = received * 100 / order.size;
+      if (pct - lastReported >= 10 && received < order.size) {
+        lastReported = pct;
+        if (!report(order.deploymentId, "downloading", pct)) {
+          cancelled = true;
+          break;
+        }
+        lastData = millis();  // the report took time, not the server
+      }
     }
+    http.end();
   }
-  http.end();
 
   if (!err && !cancelled) {
     uint8_t digest[32];
     char hex[65];
     sha.finish(digest);
     for (int i = 0; i < 32; i++) sprintf(&hex[i * 2], "%02x", digest[i]);
-    if (!order.sha256.equalsIgnoreCase(hex)) err = "sha256 mismatch";
+    if (!order.sha256.equalsIgnoreCase(hex)) {
+      err = "sha256 mismatch";
+    } else if (_cfg.signingKey) {
+      err = verifySignature(_cfg.signingKey, digest, order.signature);
+    }
   }
   if (err || cancelled) {
     abortUpdate();

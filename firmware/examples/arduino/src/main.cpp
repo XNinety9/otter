@@ -20,12 +20,7 @@ void setup() {
   }
   Serial.printf("\nIP %s\n", WiFi.localIP().toString().c_str());
 
-  OtterAgent::Config config;
-  config.server = OTTER_SERVER;
-  config.app = "otter-demo-arduino";
-  config.version = APP_VERSION;
-  config.fleetKey = OTTER_FLEET_KEY;
-  otter.begin(config);
+  // Handlers first: on ESP32 the agent starts checking in, in its own task, at begin().
   // Remote configuration from the dashboard, e.g. {"greeting": "hello"}.
   otter.onConfig([](const String &config) { Serial.printf("configuration: %s\n", config.c_str()); });
   // A remote command to try from the dashboard: answers with its arguments.
@@ -33,6 +28,16 @@ void setup() {
     message = args;
     return true;
   });
+
+  OtterAgent::Config config;
+  config.server = OTTER_SERVER;
+  config.app = "otter-demo-arduino";
+  config.version = APP_VERSION;
+  config.fleetKey = OTTER_FLEET_KEY;
+#ifdef OTTER_SIGNING_PUBKEY_PEM
+  config.signingKey = OTTER_SIGNING_PUBKEY_PEM;  // only accept updates signed with this key
+#endif
+  otter.begin(config);
 }
 
 void loop() {
