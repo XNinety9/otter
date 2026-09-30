@@ -2,6 +2,7 @@
 
 import gzip
 import hashlib
+import zlib
 import os
 import shutil
 import tempfile
@@ -48,6 +49,7 @@ def store_firmware(src: BinaryIO) -> tuple[str, int]:
 
 def delete_firmware_file(sha256: str) -> None:
     firmware_path(sha256).unlink(missing_ok=True)
+    compressed_path(sha256).unlink(missing_ok=True)
 
 
 def image_elf_sha256(image: Path) -> str | None:
@@ -97,3 +99,24 @@ def open_elf(elf_sha256: str):
 
 def delete_elf(elf_sha256: str) -> None:
     elf_path(elf_sha256).unlink(missing_ok=True)
+
+
+# A compressed copy is kept when it saves at least this much (#25): images already compressed
+# or encrypted don't shrink, and then devices download the plain image.
+MIN_COMPRESSION_GAIN = 0.05
+
+
+def compressed_path(sha256: str) -> Path:
+    return config.FIRMWARE_DIR / f"{sha256}.zlib"
+
+
+def compress_firmware(sha256: str, size: int) -> int | None:
+    """Writes a zlib copy of the image; returns its size, or None when not worth it."""
+    data = firmware_path(sha256).read_bytes()
+    packed = zlib.compress(data, 9)
+    if len(packed) > size * (1 - MIN_COMPRESSION_GAIN):
+        return None
+    with tempfile.NamedTemporaryFile(dir=config.FIRMWARE_DIR, delete=False) as tmp:
+        tmp.write(packed)
+    os.replace(tmp.name, compressed_path(sha256))
+    return len(packed)

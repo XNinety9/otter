@@ -248,6 +248,13 @@ GET /api/v1/firmwares/{id}/download
 Returns the raw `.bin` image. The device must verify the SHA-256 of what it wrote
 against `update.sha256` before switching boot partitions.
 
+When compressing saves at least 5 %, the update order also offers the image zlib-compressed:
+`"compressed": {"url": "…/download?format=zlib", "size": 750629, "format": "zlib"}` (ESP32
+images shrink by about 40 %). An agent that can inflate downloads that instead and inflates it
+while writing (the ESP-IDF agent uses the ROM's `tinfl`, with a 32 KB window); `size` and
+`sha256` still describe the image itself. Ranges count compressed bytes, so a resumed download
+continues the stream where it stopped.
+
 A device can resume an interrupted download with `Range: bytes=<offset>-`: the server answers
 `206 Partial Content` with the rest of the image. On a weak Wi-Fi link, a connection that
 stops receiving data for a few seconds rarely recovers (the server's TCP waits twice as long

@@ -18,7 +18,15 @@ from .notify import INFO, Message, notifier
 from .models import OPEN_STATES, Command, Crash, Deployment, Device, Firmware, Tag, device_tags
 from .rollouts import cancel_open_deployments
 from .schemas import CommandIn, CommandOut, ConfigIn, ConfigOut, CrashOut, DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, FirmwarePatch, TagName, TagOut, normalize_tag
-from .storage import delete_elf, delete_firmware_file, firmware_path, image_elf_sha256, store_elf, store_firmware
+from .storage import (
+    compress_firmware,
+    delete_elf,
+    delete_firmware_file,
+    firmware_path,
+    image_elf_sha256,
+    store_elf,
+    store_firmware,
+)
 
 router = APIRouter(prefix="/api", tags=["ui"], dependencies=[Depends(require_user)])
 
@@ -275,6 +283,7 @@ def upload_firmware(
     fw = Firmware(
         app=app.strip(), hw=hw.strip(), version=version.strip(), size=size, sha256=sha, notes=notes, channel=channel,
         signature=signature, elf_sha256=image_elf_sha256(firmware_path(sha)),
+        compressed_size=compress_firmware(sha, size),
     )
     if elf is not None:
         try:

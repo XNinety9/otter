@@ -74,6 +74,14 @@ class UpdateOrder(BaseModel):
     size: int
     sha256: str
     signature: str | None = None  # base64 signature of the image, when it was signed
+    # The same image, zlib-compressed: agents that can inflate download this instead (#25).
+    compressed: "CompressedImage | None" = None
+
+
+class CompressedImage(BaseModel):
+    url: str
+    size: int
+    format: Literal["zlib"] = "zlib"
 
 
 class CommandOrder(BaseModel):
@@ -188,6 +196,7 @@ class FirmwareOut(BaseModel):
     signed: bool = False
     has_elf: bool = False
     crash_count: int = 0
+    compressed_size: int | None = None
 
 
 class DeploymentOut(BaseModel):

@@ -802,7 +802,8 @@ function renderFirmwares() {
       <td><span class="tag">${esc(f.hw)}</span></td>
       <td class="mono">${esc(f.version)}${f.signed ? ` <span class="signed" title="Signed: devices built with the public key check it">🔏</span>` : ""}${
         f.crash_count ? ` <span class="crash-chip" title="Crash reports from devices running it">💥 ${f.crash_count}</span>` : ""}</td>
-      <td>${bytes(f.size)}</td>
+      <td${f.compressed_size ? ` title="Downloaded compressed: ${bytes(f.compressed_size)}"` : ""}>${bytes(f.size)}${
+        f.compressed_size ? ` <span class="muted">(${bytes(f.compressed_size)} zipped)</span>` : ""}</td>
       <td class="mono muted" title="${esc(f.sha256)}">${esc(f.sha256.slice(0, 12))}…</td>
       <td title="${esc(new Date(f.uploaded_at).toLocaleString())}">${ago(f.uploaded_at)}</td>
       <td><select class="channel-select" aria-label="Publish on channel">${channelOptions(f.channel, "—")}</select></td>

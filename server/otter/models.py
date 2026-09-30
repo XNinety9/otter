@@ -115,6 +115,7 @@ class Firmware(Base):
     # that ELF was uploaded: crash reports are then decoded (#24).
     elf_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     has_elf: Mapped[bool] = mapped_column(default=False, server_default="0")
+    compressed_size: Mapped[int | None]  # size of the zlib copy devices download instead (#25)
 
     @property
     def signed(self) -> bool:

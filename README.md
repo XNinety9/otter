@@ -281,6 +281,13 @@ reach the server for 3 wake-ups in a row is rolled back. The ESP-IDF example has
 (`pio run -e esp32c6-sleepy`, app `otter-sleepy`, 60 s of sleep). The Arduino library doesn't
 have a one-shot mode yet.
 
+## Compressed updates
+
+Otter keeps a zlib copy of each image that compresses well (ESP32 images: about 40 % smaller) and
+the ESP-IDF agent downloads that, inflating it on the fly with the decompressor in the chip's
+ROM: less to send on a weak link or to a battery device, nothing to configure. The firmware
+table shows both sizes. Other agents keep downloading the plain image.
+
 ## Crash reports
 
 When an ESP-IDF device crashes, the core dump stays in its `coredump` partition; at its next
