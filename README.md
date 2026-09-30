@@ -199,6 +199,9 @@ python3 -c "import sys; sys.stdout.buffer.write(b'\xe9' + b'x' * 300_000)" > fak
 
 ## Flash a real device
 
+To put Otter in your own firmware, or adapt the examples to your devices, see
+[Put Otter in your firmware](docs/firmware.md).
+
 The server must listen on the LAN (`--host 0.0.0.0`) and `OTTER_SERVER` must be the
 address devices can reach, e.g. your machine's LAN IP.
 

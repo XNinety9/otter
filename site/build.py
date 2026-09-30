@@ -5,6 +5,7 @@ repository's own Markdown so they can't drift from it.
 """
 
 import html
+import os
 import re
 import shutil
 from pathlib import Path
@@ -19,10 +20,11 @@ REPO = "https://github.com/XNinety9/otter"
 # (output page, title, source, nav label)
 PAGES = [
     ("guide.html", "Guide", ROOT / "README.md", "Guide"),
+    ("firmware.html", "Put Otter in your firmware", ROOT / "docs" / "firmware.md", "Firmware"),
     ("protocol.html", "Device protocol", ROOT / "docs" / "protocol.md", "Protocol"),
 ]
 # Repository paths that have a page on the site.
-PAGE_FOR = {"README.md": "guide.html", "docs/protocol.md": "protocol.html"}
+PAGE_FOR = {"README.md": "guide.html", "docs/firmware.md": "firmware.html", "docs/protocol.md": "protocol.html"}
 
 TEMPLATE = """<!doctype html>
 <html lang="en">
@@ -72,7 +74,7 @@ def rewrite_links(body: str, source: Path) -> str:
             return match.group(0)
         path, _, anchor = url.partition("#")
         repo_path = (base / path).as_posix() if str(base) != "." else path
-        repo_path = str(Path(repo_path)).replace("\\", "/")
+        repo_path = os.path.normpath(repo_path).replace("\\", "/")
         if repo_path in PAGE_FOR:
             target = PAGE_FOR[repo_path] + (f"#{anchor}" if anchor else "")
         else:

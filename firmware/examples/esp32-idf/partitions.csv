@@ -1,4 +1,9 @@
 # Two OTA slots for a 4 MB flash, no factory app, and room for a core dump (crash reports).
+# Otter needs otadata and two OTA slots (an update is written to the slot not running); the
+# coredump partition is optional (crash reports). [ADAPT] With 8 MB or more, you can make each
+# slot bigger (e.g. two slots of 0x3E0000, at 0x10000 and 0x3F0000), and add a data partition
+# for your app.
+# A new partition table only reaches a device over USB, never over the air: choose it early.
 # Name,   Type, SubType, Offset,   Size
 nvs,      data, nvs,     0x9000,   0x4000
 otadata,  data, ota,     0xd000,   0x2000
