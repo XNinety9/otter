@@ -286,12 +286,15 @@ reach the server for 3 wake-ups in a row is rolled back. The ESP-IDF example has
 (`pio run -e esp32c6-sleepy`, app `otter-sleepy`, 60 s of sleep). With the Arduino library, call
 `otter.checkinOnce(config, 600)` instead of `begin()`.
 
-## Compressed updates
+## Compressed and delta updates
 
 Otter keeps a zlib copy of each image that compresses well (ESP32 images: about 40 % smaller) and
 the ESP-IDF agent downloads that, inflating it on the fly with the decompressor in the chip's
-ROM: less to send on a weak link or to a battery device, nothing to configure. The firmware
-table shows both sizes. Other agents keep downloading the plain image.
+ROM. Better still, when a device runs an image Otter knows (same app, hardware and version), the
+update comes as a patch from that image ([detools](https://pypi.org/project/detools/), applied by
+Espressif's `esp_delta_ota`): a few tens of KB instead of a megabyte. The device checks that it
+really runs the patch's base first, and a retry downloads the whole image. Nothing to configure:
+the smallest transfer is picked each time. Other agents keep downloading the plain image.
 
 ## Crash reports
 

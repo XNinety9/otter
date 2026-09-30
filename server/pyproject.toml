@@ -15,6 +15,7 @@ dependencies = [
     "cryptography>=50.0.1",
     "zeroconf>=0.151.5",
     "pyelftools>=0.33",
+    "detools>=0.53.0",
 ]
 
 [dependency-groups]

@@ -1,6 +1,7 @@
 """Endpoints called by devices. See docs/protocol.md."""
 
 import asyncio
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Literal
@@ -19,15 +20,17 @@ from .events import broadcaster, wakeups
 from .metrics import CHECKINS, CRASHES, DOWNLOAD_BYTES, DOWNLOADS
 from .notify import notifier
 from .models import CRASH_RESETS, Command, Deployment, Device, Firmware
-from .schemas import CheckinIn, CheckinOut, CommandResultIn, CompressedImage, ConfigOrder, CrashIn, DeviceOut, ProgressIn, UpdateOrder
-from .storage import compressed_path, firmware_path
+from .schemas import CheckinIn, CheckinOut, CommandResultIn, CompressedImage, ConfigOrder, CrashIn, DeltaPatch, DeviceOut, ProgressIn, UpdateOrder
+from .storage import compressed_path, delta_path, delta_size, firmware_path, image_hash
 
 
 # Longest a check-in may be held open (long polling).
 MAX_WAIT_S = 60
 
 # Failures a new attempt may fix, as reported by the agents (ESP-IDF, Arduino, simulator).
-TRANSIENT_ERRORS = ("connection lost", "download timeout", "cannot reach", "download refused", "out of memory")
+TRANSIENT_ERRORS = (
+    "connection lost", "download timeout", "cannot reach", "download refused", "out of memory", "delta patch failed",
+)
 
 
 def is_transient(error: str | None, retryable: bool | None) -> bool:
@@ -35,6 +38,8 @@ def is_transient(error: str | None, retryable: bool | None) -> bool:
         return retryable
     return any(marker in (error or "").lower() for marker in TRANSIENT_ERRORS)
 
+
+log = logging.getLogger("otter.devices")
 
 router = APIRouter(prefix="/api/v1", tags=["device"])
 
@@ -146,6 +151,7 @@ def record_checkin(
                     compressed=CompressedImage(
                         url=f"{base}/api/v1/firmwares/{fw.id}/download?format=zlib", size=fw.compressed_size
                     ) if fw.compressed_size else None,
+                    delta=delta_for(session, device, deployment, fw, base),
                 )
 
         sent, expired = commands.deliver(device)
@@ -170,6 +176,34 @@ def record_checkin(
             config=config_order,
         )
         return answer, device.last_seen
+
+
+# A patch is offered when well below the compressed image, and at the first attempt only: a
+# retry after a failed patch downloads the whole image.
+DELTA_MAX_RATIO = 0.5
+
+
+def delta_for(session: Session, device: Device, deployment: Deployment, fw: Firmware, base: str) -> DeltaPatch | None:
+    """A patch from the image the device runs, if Otter has it (#26). The device checks that it
+    really runs that image (base_hash) before using the patch."""
+    if deployment.attempts > 1:
+        return None
+    current = session.scalar(
+        select(Firmware).where(Firmware.app == device.app, Firmware.hw == device.hw, Firmware.version == device.fw_version)
+    )
+    if current is None or current.id == fw.id:
+        return None
+    try:
+        base_hash = image_hash(current.sha256)
+        if not base_hash or not image_hash(fw.sha256):
+            return None
+        size = delta_size(current.sha256, fw.sha256)
+    except Exception:
+        log.exception("can't make a patch from %s to %s", current.version, fw.version)
+        return None
+    if size > (fw.compressed_size or fw.size) * DELTA_MAX_RATIO:
+        return None
+    return DeltaPatch(url=f"{base}/api/v1/firmwares/{fw.id}/delta?base={current.id}", size=size, base_hash=base_hash)
 
 
 def restarted(device: Device, body: CheckinIn) -> bool:
@@ -260,6 +294,31 @@ def report_progress(
     if deployment.status == "failed":  # final failures only, not the ones being retried
         notifier.emit("deployment_failed", deployment_id=deployment.id)
     return {"ok": True}
+
+
+@router.get("/firmwares/{firmware_id}/delta")
+def download_delta(
+    firmware_id: int,
+    base: int,
+    request: Request,
+    auth: DeviceAuth = Depends(authenticate),
+    session: Session = Depends(get_session),
+):
+    """The patch from firmware `base` to this one (#26); ranges work as for images."""
+    fw, base_fw = session.get(Firmware, firmware_id), session.get(Firmware, base)
+    if fw is None or base_fw is None:
+        raise HTTPException(404, "unknown firmware")
+    size = delta_size(base_fw.sha256, fw.sha256)
+    resume = re.fullmatch(r"bytes=(\d+)-", request.headers.get("range", ""))
+    offset = min(int(resume.group(1)), size) if resume else 0
+    if offset == 0:
+        DOWNLOADS.labels(fw.app, fw.version).inc()
+    DOWNLOAD_BYTES.inc(size - offset)
+    return FileResponse(
+        delta_path(base_fw.sha256, fw.sha256),
+        media_type="application/octet-stream",
+        filename=f"{fw.app}-{fw.hw}-{base_fw.version}-to-{fw.version}.patch",
+    )
 
 
 @router.get("/firmwares/{firmware_id}/download")
