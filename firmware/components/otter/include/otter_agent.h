@@ -2,7 +2,21 @@
 
 /*
  * Otter agent for ESP-IDF: checks in with an Otter server and applies OTA updates.
- * Protocol: docs/protocol.md.
+ * Integration guide: docs/firmware.md. Protocol: docs/protocol.md.
+ *
+ * Once the network is up (and nvs_flash_init() done):
+ *
+ *     otter_config_t otter = {
+ *         .server_url = "http://192.168.1.10:8000", // NULL: found over mDNS
+ *         .app_name = "weather-station",            // as uploaded to Otter
+ *         .fleet_key = "…",                          // if the server has one
+ *     };
+ *     otter_register_command("calibrate", calibrate, NULL); // optional, before starting
+ *     otter_on_config(on_config, NULL);                     // optional
+ *     ESP_ERROR_CHECK(otter_start(&otter));                 // runs in its own task
+ *
+ * The project also needs two OTA partitions and CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE: see
+ * the guide.
  */
 
 #include <stdbool.h>

@@ -1,3 +1,7 @@
+# Settings Otter needs (or benefits from). Copy them into your project's sdkconfig.defaults.
+# After changing this file, delete the generated sdkconfig.<env> so they apply.
+
+# [ADAPT] Your board's flash size (4 MB fits the partitions below; see partitions.csv).
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

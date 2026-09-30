@@ -1,5 +1,17 @@
 /*
- * Minimal Otter device: joins Wi-Fi, starts the agent, then does its "real" job.
+ * An Otter device with ESP-IDF: joins Wi-Fi, starts the Otter agent, then does its job.
+ *
+ * Start your own firmware from this file. What to adapt is marked [ADAPT 1] to [ADAPT 5];
+ * the rest (NVS, Wi-Fi, Improv) can stay as is. See docs/firmware.md for the whole guide,
+ * including the other files of this project (CMakeLists.txt, platformio.ini, partitions).
+ *
+ *   [ADAPT 1] OTTER_APP_NAME   your application's name in Otter
+ *   [ADAPT 2] commands         what the dashboard can ask the device to do
+ *   [ADAPT 3] on_config()      your settings, edited in the dashboard
+ *   [ADAPT 4] otter_config_t   how the agent behaves (validation, rollback…)
+ *   [ADAPT 5] the main loop    your device's actual work
+ *
+ * Build-time settings (Wi-Fi, server, keys) come from the environment: see platformio.ini.
  */
 
 #include <stdio.h>
@@ -30,11 +42,20 @@
 
 static const char *TAG = "demo";
 
+/* [ADAPT 1] Your application's name. Otter matches firmware to devices by application name and
+ * hardware: every image you upload for this device must use the same name (tools/push.sh,
+ * firmware/apps.json for tools/release.sh). One name per kind of device: "weather-station",
+ * "garage-door"… The version comes from CMakeLists.txt. */
 #ifdef OTTER_DEMO_SLEEP_S
 #define OTTER_APP_NAME "otter-sleepy"
 #else
 #define OTTER_APP_NAME "otter-demo"
 #endif
+
+/* --- Wi-Fi: keep as is ---------------------------------------------------------------------
+ * The network comes from WIFI_SSID / WIFI_PASS at build time, else from the one the Wi-Fi
+ * driver saved (after Improv or a set_wifi command). Reconnects on its own. */
+
 static EventGroupHandle_t s_wifi_events;
 #define WIFI_CONNECTED BIT0
 #define WIFI_DISCONNECTED BIT1 /* while joining another network (wifi_join) */
@@ -143,7 +164,12 @@ static bool wifi_join(const char *ssid, const char *password)
     return joined;
 }
 
-/* Remote commands (sent from the Otter dashboard) ----------------------------- */
+/* --- [ADAPT 2] Remote commands ----------------------------------------------------------
+ * Commands are sent from the dashboard (device panel, or several devices at once) and run in
+ * the agent's task: keep them short. A handler gets its arguments as a JSON object ("{}"
+ * without any), writes a short answer for the dashboard in result, and returns ESP_OK or an
+ * error. "reboot" is built into the agent; the ones below are examples: keep, change or drop
+ * them, and add yours with otter_register_command() in app_main(). */
 
 /* "identify": blinks an LED for a few seconds, to find the device on a shelf. Which one comes
  * from the remote configuration: {"led_gpio": 8, "led_type": "ws2812"} for an addressable RGB
@@ -241,14 +267,16 @@ static esp_err_t identify(const char *args, char *result, size_t result_size, vo
     return ESP_OK;
 }
 
-/* Remote configuration: try {"alive_interval_s": 10, "greeting": "hello"} on this device or
- * one of its tags in the dashboard. */
+/* --- [ADAPT 3] Remote configuration ------------------------------------------------------
+ * Settings edited in the dashboard, per device or per tag: a JSON object of strings, numbers
+ * and booleans, saved on the device. Read them anywhere with otter_config_get_int/bool/str()
+ * (as the main loop below does), and react to changes here: called at start, then each time
+ * the configuration changes, without a reboot. Try {"alive_interval_s": 10, "greeting":
+ * "hello"} on this device. The keys are yours to choose. */
 static void on_config(const char *config_json, void *ctx)
 {
     ESP_LOGI(TAG, "configuration: %s", config_json);
 }
-
-static bool wifi_join(const char *ssid, const char *password);
 
 /* "set_wifi" {"ssid": …, "password": …}: moves the device to another network from the
  * dashboard (moving house, a new router); back to the current one if it can't join it. */
@@ -280,6 +308,7 @@ static esp_err_t echo(const char *args, char *result, size_t result_size, void *
 
 void app_main(void)
 {
+    /* NVS keeps the Wi-Fi network, the device's Otter token and its configuration. */
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -305,6 +334,10 @@ void app_main(void)
     }
     xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED, pdFALSE, pdTRUE, portMAX_DELAY);
 
+    /* [ADAPT 4] The agent's settings (all fields: components/otter/include/otter_agent.h).
+     * Set manual_mark_valid = true to confirm a new firmware yourself, with
+     * otter_mark_valid(), once your device works (sensors read, actuators respond): the
+     * bootloader rolls back a firmware not confirmed within rollback_timeout_s (300 s). */
     otter_config_t otter = {
         .server_url = OTTER_SERVER, // "" (OTTER_SERVER unset at build time): found over mDNS
         .app_name = OTTER_APP_NAME,
@@ -316,14 +349,15 @@ void app_main(void)
         .signing_key_pem = OTTER_SIGNING_PUBKEY_PEM,
 #endif
     };
+    /* [ADAPT 2, 3] Your commands and configuration handler (before the agent starts). */
     otter_register_command("identify", identify, NULL);
     otter_register_command("echo", echo, NULL);
     otter_register_command("set_wifi", set_wifi, NULL);
     otter_on_config(on_config, NULL);
 
 #ifdef OTTER_DEMO_SLEEP_S
-    // A battery device (env esp32c6-sleepy): wake up, do the job, check in once, sleep. Commands,
-    // configuration and updates wait for its next wake-up, which Otter knows about.
+    // [ADAPT 5, battery devices] Wake up, do the job, check in once, sleep (env esp32c6-sleepy).
+    // Commands, configuration and updates wait for the next wake-up, which Otter knows about.
     if (otter_checkin_once(&otter, OTTER_DEMO_SLEEP_S) != ESP_OK) {
         ESP_LOGW(TAG, "server unreachable, trying again at the next wake-up");
     }
@@ -334,9 +368,11 @@ void app_main(void)
     esp_deep_sleep((uint64_t)OTTER_DEMO_SLEEP_S * 1000000);
 #endif
 
-    ESP_ERROR_CHECK(otter_start(&otter));
+    ESP_ERROR_CHECK(otter_start(&otter)); // runs in its own task from now on
 
-    // The device's actual work goes here, tuned by its remote configuration.
+    // [ADAPT 5] The device's actual work goes here: read sensors, drive relays… It runs next to
+    // the agent, which checks in, applies updates and runs commands on its own. This demo only
+    // logs a line, tuned by its remote configuration.
     while (true) {
         char greeting[32];
         otter_config_get_str("greeting", greeting, sizeof(greeting), "alive");

@@ -1,7 +1,25 @@
 #pragma once
 
 // Otter agent for Arduino (ESP8266 / ESP32): checks in with an Otter server and
-// applies OTA updates. Protocol: docs/protocol.md.
+// applies OTA updates. Integration guide: docs/firmware.md. Protocol: docs/protocol.md.
+//
+//   OtterAgent otter;
+//
+//   void setup() {
+//     // … connect to Wi-Fi first
+//     otter.onCommand("calibrate", calibrate);  // optional, before begin()
+//     OtterAgent::Config config;
+//     config.server = "http://192.168.1.10:8000";
+//     config.app = "weather-station";  // as uploaded to Otter
+//     config.version = "1.2.0";
+//     config.fleetKey = "…";           // if the server has one
+//     otter.begin(config);
+//   }
+//
+//   void loop() {
+//     otter.loop();  // needed on ESP8266
+//     // your work, non-blocking
+//   }
 
 #include <Arduino.h>
 
