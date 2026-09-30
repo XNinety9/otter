@@ -126,6 +126,9 @@ article.doc table { width: 100%; border-collapse: collapse; margin: 16px 0; font
 article.doc th, article.doc td { padding: 8px 12px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
 article.doc th { background: var(--surface); }
 article.doc img { border-radius: 8px; }
+article.doc .task-list-item { list-style: none; }
+article.doc ul:has(> .task-list-item) { padding-left: 4px; }
+article.doc .task-list-item input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0 10px 0 0; vertical-align: -2px; }
 
 @media (max-width: 820px) {
   .docs { grid-template-columns: minmax(0, 1fr); }  /* not 1fr: long code blocks must scroll, not widen the page */

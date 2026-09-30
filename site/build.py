@@ -92,8 +92,11 @@ def render(page: str, title: str, source: Path) -> str:
         text = re.sub(r"^# .*\n", "", text, count=1)  # the template shows the title
     md = markdown.Markdown(
         # superfences: code blocks nested in lists (fenced_code turns them into inline code).
-        extensions=["pymdownx.superfences", "tables", "toc", "sane_lists", "attr_list"],
-        extension_configs={"toc": {"permalink": "#", "toc_depth": "2-3"}},
+        extensions=["pymdownx.superfences", "tables", "toc", "sane_lists", "attr_list", "pymdownx.tasklist"],
+        extension_configs={
+            "toc": {"permalink": "#", "toc_depth": "2-3"},
+            "pymdownx.tasklist": {"clickable_checkbox": True},  # readers tick the checklists
+        },
     )
     body = rewrite_links(md.convert(text), source)
     nav = "".join(
