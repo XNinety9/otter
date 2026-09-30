@@ -186,6 +186,8 @@ class FirmwareOut(BaseModel):
     uploaded_at: UtcDatetime
     channel: str | None = None
     signed: bool = False
+    has_elf: bool = False
+    crash_count: int = 0
 
 
 class DeploymentOut(BaseModel):
@@ -309,3 +311,42 @@ class RolloutOut(BaseModel):
     created_at: UtcDatetime
     updated_at: UtcDatetime
     next_stage_at: UtcDatetime | None
+
+
+class CrashIn(BaseModel):
+    """A core dump summary (#24). ESP32 (Xtensa): backtrace. RISC-V chips: registers and the
+    raw words of the crashed task's stack."""
+
+    elf_sha256: str = Field(pattern=r"^[0-9a-f]{4,64}$")
+    task: str | None = Field(default=None, max_length=32)
+    reason: str | None = Field(default=None, max_length=200)
+    pc: int = Field(ge=0, lt=2**32)
+    backtrace: list[Annotated[int, Field(ge=0, lt=2**32)]] = Field(default=[], max_length=64)
+    backtrace_corrupted: bool = False
+    registers: dict[Annotated[str, Field(max_length=16)], Annotated[int, Field(ge=0, lt=2**32)]] = Field(
+        default={}, max_length=40
+    )
+    stack: list[Annotated[int, Field(ge=0, lt=2**32)]] = Field(default=[], max_length=1024)
+
+
+class FrameOut(BaseModel):
+    address: str
+    kind: str  # pc, return, stack
+    function: str | None = None
+    offset: int | None = None
+    file: str | None = None
+    line: int | None = None
+
+
+class CrashOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    device_id: int
+    firmware_id: int | None
+    fw_version: str | None
+    task: str | None
+    reason: str | None
+    frames: Annotated[list[FrameOut], BeforeValidator(lambda v: json.loads(v) if isinstance(v, str) else v)]
+    decoded: bool = False  # whether the ELF was there to name the frames
+    created_at: UtcDatetime

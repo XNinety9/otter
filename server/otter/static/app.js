@@ -485,6 +485,29 @@ function openPanel(id) {
   panel.showModal();
   loadCommands(id);
   loadConfig(id, "device");
+  loadCrashes(id);
+}
+
+// --- Crash reports ------------------------------------------------------------------
+
+async function loadCrashes(id) {
+  let crashes;
+  try {
+    crashes = await api("GET", `/api/devices/${id}/crashes`);
+  } catch {
+    return;
+  }
+  if (id !== panelDeviceId) return;
+  $(".crashes-empty", panel).hidden = crashes.length > 0;
+  $(".crash-list", panel).innerHTML = crashes.map((c, i) => `
+    <details${i === 0 ? " open" : ""}>
+      <summary>${ago(c.created_at)} · ${esc(c.fw_version || "unknown version")}${c.task ? ` · task ${esc(c.task)}` : ""} ·
+        <span class="reason">${esc(c.reason || "crash")}</span></summary>
+      <ol>${c.frames.map((f) => `<li class="${esc(f.kind)}" title="${f.kind === "stack" ? "found on the stack: probably a caller" : esc(f.kind)}">${
+        f.function ? `${esc(f.function)}+${f.offset}` : esc(f.address)}${
+        f.file ? ` <span class="where">${esc(f.file)}:${f.line}</span>` : ""}</li>`).join("")}</ol>
+      ${c.decoded ? "" : `<p class="hint">Upload this firmware's ELF file to see function names and lines.</p>`}
+    </details>`).join("");
 }
 
 // --- Remote configuration -------------------------------------------------------
@@ -777,7 +800,8 @@ function renderFirmwares() {
     <tr data-id="${f.id}">
       <td>${esc(f.app)}</td>
       <td><span class="tag">${esc(f.hw)}</span></td>
-      <td class="mono">${esc(f.version)}${f.signed ? ` <span class="signed" title="Signed: devices built with the public key check it">🔏</span>` : ""}</td>
+      <td class="mono">${esc(f.version)}${f.signed ? ` <span class="signed" title="Signed: devices built with the public key check it">🔏</span>` : ""}${
+        f.crash_count ? ` <span class="crash-chip" title="Crash reports from devices running it">💥 ${f.crash_count}</span>` : ""}</td>
       <td>${bytes(f.size)}</td>
       <td class="mono muted" title="${esc(f.sha256)}">${esc(f.sha256.slice(0, 12))}…</td>
       <td title="${esc(new Date(f.uploaded_at).toLocaleString())}">${ago(f.uploaded_at)}</td>
@@ -1111,6 +1135,10 @@ function connect() {
   es.addEventListener("resync", () => resync());
   es.addEventListener("rollouts", () => loadRollouts());
   es.addEventListener("command", (e) => commandArrived(JSON.parse(e.data)));
+  es.addEventListener("crash", (e) => {
+    if (JSON.parse(e.data).device_id === panelDeviceId) loadCrashes(panelDeviceId);
+    api("GET", "/api/firmwares").then((f) => { state.firmwares = f; renderFirmwares(); }).catch(() => {});
+  });
   es.addEventListener("config", (e) => {
     if (JSON.parse(e.data).device_ids.includes(panelDeviceId)) loadConfig(panelDeviceId);
   });

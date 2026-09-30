@@ -281,6 +281,31 @@ reach the server for 3 wake-ups in a row is rolled back. The ESP-IDF example has
 (`pio run -e esp32c6-sleepy`, app `otter-sleepy`, 60 s of sleep). The Arduino library doesn't
 have a one-shot mode yet.
 
+## Crash reports
+
+When an ESP-IDF device crashes, the core dump stays in its `coredump` partition; at its next
+check-in the agent sends a summary (task, panic reason, registers, stack) and erases it. Otter
+matches it with the firmware it came from and, if it has that firmware's ELF file, shows a
+readable call stack in the device's panel:
+
+```
+abort() was called at PC 0x42000631 on core 0
+  panic_abort+18      panic.c:509
+  abort+109           abort.c:38
+  app_main+331        main.c:168
+```
+
+`tools/push.sh` and `tools/release.sh` upload the `firmware.elf` found next to the image; add it
+later with `POST /api/firmwares/{id}/elf`. Decoding happens on the server in Python (no ESP-IDF
+toolchain needed), and Otter checks that the ELF is the one the image was built from. On RISC-V
+chips (C3, C6…) the device can't unwind its stack: after the crash address and the return
+address, the callers are code addresses found on the stack, most likely but not certainly
+right (shown faded). Crash counts appear next to each firmware version.
+
+Your project needs a `coredump` data partition (the example's `partitions.csv` has one, 64 KB at
+the end of a 4 MB flash) and `CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y`. A new partition table only
+reaches a device over USB. The ELF files take room: about 4 MB per image compressed.
+
 ## Remote configuration
 
 Settings that shouldn't need a new firmware (intervals, thresholds, feature flags): edit them in a

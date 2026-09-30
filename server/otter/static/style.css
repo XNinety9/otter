@@ -240,6 +240,13 @@ dialog#rollout-dialog::backdrop { background: rgb(0 0 0 / .45); }
 .auth-chip { font-size: 11px; padding: 0 7px; border-radius: 99px; white-space: nowrap; }
 .auth-chip.revoked { color: var(--err); background: color-mix(in srgb, var(--err) 12%, transparent); }
 .auth-chip.awaiting_approval { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.crash-list details { border-top: 1px solid var(--border); padding: 6px 0; font-size: 13px; }
+.crash-list summary { cursor: pointer; }
+.crash-list summary .reason { color: var(--err); }
+.crash-list ol { margin: 6px 0 2px; padding-left: 22px; font-family: var(--mono, monospace); font-size: 12px; }
+.crash-list li.stack { opacity: .75; }
+.crash-list .where { color: var(--muted); }
+.crash-list .hint { color: var(--muted); margin: 4px 0 0; }
 .command-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .cmd-custom { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .cmd-custom input[name=name] { width: 140px; }

@@ -185,6 +185,28 @@ Names are lowercase letters, digits and `_` (at most 32); `args` is a JSON objec
 bytes) or null. Built into the agents: `reboot` and `identify` (make the device show itself,
 e.g. blink an LED); applications register their own.
 
+### Crash reports
+
+After a crash, at its first check-in that reaches the server, an ESP-IDF device sends its core
+dump summary (then erases it):
+
+```
+POST /api/v1/crashes            (?mac=<mac> when authenticating with the fleet key)
+Content-Type: application/json
+
+{
+  "elf_sha256": "2d8042e2",       // app_elf_sha256 of the crashed app (a prefix is fine)
+  "task": "main",
+  "reason": "abort() was called at PC 0x42000631 on core 0",
+  "pc": 1082169736,
+  "backtrace": [ … ],             // Xtensa: the backtrace
+  "registers": { "ra": …, "sp": … }, "stack": [ … ]   // RISC-V: registers and stack words
+}
+```
+
+The server finds the firmware whose image names that ELF hash, and decodes the addresses with
+its ELF file when it has it.
+
 ## 2. Progress reports
 
 While applying an update, the device reports its progress. Reports are best effort: a lost

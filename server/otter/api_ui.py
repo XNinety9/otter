@@ -8,17 +8,17 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from . import commands, config, devconfig, signing
+from . import commands, config, crashes, devconfig, signing
 from .api_device import publish_device
 from .api_rollouts import reconcile_channels
 from .auth import require_user
 from .db import get_session, utcnow
 from .events import broadcaster, wakeups
 from .notify import INFO, Message, notifier
-from .models import OPEN_STATES, Command, Deployment, Device, Firmware, Tag, device_tags
+from .models import OPEN_STATES, Command, Crash, Deployment, Device, Firmware, Tag, device_tags
 from .rollouts import cancel_open_deployments
-from .schemas import CommandIn, CommandOut, ConfigIn, ConfigOut, DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, FirmwarePatch, TagName, TagOut, normalize_tag
-from .storage import delete_firmware_file, firmware_path, store_firmware
+from .schemas import CommandIn, CommandOut, ConfigIn, ConfigOut, CrashOut, DeploymentOut, DeployIn, DeviceOut, DevicePatch, FirmwareOut, FirmwarePatch, TagName, TagOut, normalize_tag
+from .storage import delete_elf, delete_firmware_file, firmware_path, image_elf_sha256, store_elf, store_firmware
 
 router = APIRouter(prefix="/api", tags=["ui"], dependencies=[Depends(require_user)])
 
@@ -232,7 +232,9 @@ def delete_device(device_id: int, session: Session = Depends(get_session)):
 
 @router.get("/firmwares", response_model=list[FirmwareOut])
 def list_firmwares(session: Session = Depends(get_session)):
-    return session.scalars(select(Firmware).order_by(Firmware.uploaded_at.desc())).all()
+    counts = dict(session.execute(select(Crash.firmware_id, func.count()).group_by(Crash.firmware_id)).all())
+    firmwares = session.scalars(select(Firmware).order_by(Firmware.uploaded_at.desc())).all()
+    return [FirmwareOut.model_validate(f).model_copy(update={"crash_count": counts.get(f.id, 0)}) for f in firmwares]
 
 
 @router.post("/firmwares", response_model=FirmwareOut, status_code=201)
@@ -244,8 +246,11 @@ def upload_firmware(
     notes: str | None = Form(default=None),
     channel: str | None = Form(default=None),
     signature: str | None = Form(default=None, max_length=2048),
+    elf: UploadFile | None = None,
     session: Session = Depends(get_session),
 ):
+    """The .bin image, optionally with its signature and the ELF file it was built from (to
+    decode crash reports, see crashes.py)."""
     try:
         sha, size = store_firmware(file.file)
     except ValueError as exc:
@@ -269,10 +274,18 @@ def upload_firmware(
         raise HTTPException(422, str(exc)) from exc
     fw = Firmware(
         app=app.strip(), hw=hw.strip(), version=version.strip(), size=size, sha256=sha, notes=notes, channel=channel,
-        signature=signature,
+        signature=signature, elf_sha256=image_elf_sha256(firmware_path(sha)),
     )
+    if elf is not None:
+        try:
+            attach_elf(fw, elf)
+        except ValueError as exc:
+            _cleanup_orphan(session, sha)
+            raise HTTPException(422, str(exc)) from exc
     session.add(fw)
     try:
+        session.flush()
+        crashes.adopt(session, fw)
         session.commit()
     except IntegrityError:
         session.rollback()
@@ -282,6 +295,35 @@ def upload_firmware(
     if fw.channel:
         reconcile_channels()
     return fw
+
+
+def attach_elf(fw: Firmware, elf: UploadFile) -> None:
+    if not fw.elf_sha256:
+        raise ValueError("this image doesn't name its ELF file (ESP8266?): crash reports can't use it")
+    store_elf(elf.file, fw.elf_sha256)
+    fw.has_elf = True
+
+
+@router.post("/firmwares/{firmware_id}/elf", response_model=FirmwareOut)
+def upload_elf(firmware_id: int, elf: UploadFile, session: Session = Depends(get_session)):
+    """Adds the ELF file of an image uploaded without it: its crash reports get decoded."""
+    fw = session.get(Firmware, firmware_id) or _404("firmware")
+    try:
+        attach_elf(fw, elf)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    crashes.decode_again(session, fw)
+    session.commit()
+    broadcaster.publish("firmwares")
+    return fw
+
+
+@router.get("/devices/{device_id}/crashes", response_model=list[CrashOut])
+def device_crashes(device_id: int, limit: int = 20, session: Session = Depends(get_session)):
+    session.get(Device, device_id) or _404("device")
+    return session.scalars(
+        select(Crash).where(Crash.device_id == device_id).order_by(Crash.id.desc()).limit(limit)
+    ).all()
 
 
 @router.patch("/firmwares/{firmware_id}", response_model=FirmwareOut)
@@ -306,6 +348,10 @@ def delete_firmware(firmware_id: int, session: Session = Depends(get_session)):
     session.delete(fw)
     session.commit()
     _cleanup_orphan(session, fw.sha256)
+    if fw.elf_sha256 and not session.scalar(
+        select(Firmware.id).where(Firmware.elf_sha256 == fw.elf_sha256, Firmware.has_elf)
+    ):
+        delete_elf(fw.elf_sha256)
     broadcaster.publish("firmwares")
     broadcaster.publish("resync")
 
