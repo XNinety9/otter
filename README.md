@@ -112,10 +112,11 @@ OTTER_DOMAIN=otter.example.com OTTER_TLS=you@example.com \
     ```
 
     Import `otter-ca.pem` in your browser or system trust store, and build it into the devices:
-    `OTTER_CA_CERT=/path/to/otter-ca.pem` when building the ESP-IDF example (or `cert_pem` of
-    the agent in your own firmware). `tools/release.sh` reads the same variable for its uploads,
+    `OTTER_CA_CERT=/path/to/otter-ca.pem` when building the ESP-IDF or Arduino example (or
+    `cert_pem` of the ESP-IDF agent, `config.caCert` of the Arduino library, in your own firmware). `tools/release.sh` reads the same variable for its uploads,
     `tools/push.sh` needs `CURL_CA_BUNDLE=otter-ca.pem`, and the simulator takes `--ca otter-ca.pem`.
-    With Let's Encrypt, devices need nothing: the ESP-IDF certificate bundle trusts it.
+    With Let's Encrypt, ESP-IDF devices need nothing: the ESP-IDF certificate bundle trusts it
+    (Arduino: give Let's Encrypt's root, ISRG Root X1, as the CA).
     The local CA's root certificate is valid for 10 years; renewing Caddy's short-lived
     certificates doesn't concern devices.
 

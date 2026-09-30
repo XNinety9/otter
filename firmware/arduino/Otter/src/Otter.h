@@ -22,6 +22,10 @@ class OtterAgent {
     // Optional. Public key (PEM) updates must be signed with: other images are refused
     // (ESP32; an ESP8266 given a key refuses every update, it can't check signatures yet).
     const char *signingKey = nullptr;
+    // Required for an https:// server: the CA certificate (PEM) to check it against, e.g.
+    // Caddy's local CA, or ISRG Root X1 for Let's Encrypt. The certificate is always checked.
+    // ESP8266: its validity dates are checked too, so set the clock first (configTime()).
+    const char *caCert = nullptr;
   };
 
   // Strings in config must stay valid for the program's lifetime.
