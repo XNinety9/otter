@@ -57,13 +57,19 @@
         <div class="card"><h3><span class="icon">⚡</span> Updates start in a second</h3>
           <p>Devices long-poll the server: a deployment reaches them within a second or two, and progress streams live to your browser.</p></div>
         <div class="card"><h3><span class="icon">🛟</span> Safe by default</h3>
-          <p>SHA-256 checks, bootloader rollback on ESP-IDF, automatic retries after network drops, and devices that never need an open port.</p></div>
+          <p>SHA-256 checks, bootloader rollback on ESP-IDF, downloads that resume after a stall, automatic retries, and images too big for a device's slot refused up front.</p></div>
         <div class="card"><h3><span class="icon">🪜</span> Staged rollouts</h3>
           <p>Release to 10&nbsp;%, then 50&nbsp;%, then everyone. Too many failures and the rollout halts before touching the rest of the fleet.</p></div>
         <div class="card"><h3><span class="icon">🛤️</span> Release channels</h3>
           <p>Publish on <code>beta</code> or <code>stable</code> and let devices follow a channel: they update themselves, and never downgrade.</p></div>
         <div class="card"><h3><span class="icon">🔔</span> Notifications</h3>
-          <p>Failed update, halted rollout, device offline or brand new: get told on ntfy, Discord or any webhook.</p></div>
+          <p>Failed update, halted rollout, crash, device offline or brand new: get told on ntfy, Discord or any webhook.</p></div>
+        <div class="card"><h3><span class="icon">🎛️</span> Commands and configuration</h3>
+          <p>Reboot a device or blink its LED from the dashboard, and change its settings per tag or per device, applied within a second, no reboot.</p></div>
+        <div class="card"><h3><span class="icon">💥</span> Crash reports</h3>
+          <p>A device that crashes sends its core dump summary: read the call stack with function names and source lines, per firmware version.</p></div>
+        <div class="card"><h3><span class="icon">🔋</span> Battery devices</h3>
+          <p>Deep-sleeping devices check in once per wake-up, stay "online" while asleep, and still get updates, commands and settings.</p></div>
         <div class="card"><h3><span class="icon">🏠</span> Home Assistant &amp; metrics</h3>
           <p>Devices show up in Home Assistant with a firmware update entity, and a Prometheus endpoint feeds your Grafana dashboards.</p></div>
         <div class="card"><h3><span class="icon">🐳</span> Runs anywhere</h3>
@@ -92,7 +98,7 @@
       <div class="table-scroll"><table class="support">
         <thead><tr><th>Chip</th><th>Framework</th><th>OTA + rollback</th><th>Long polling</th></tr></thead>
         <tbody>
-          <tr><td>ESP32 family (tested on ESP32-C6, builds for ESP32)</td><td>ESP-IDF component</td><td class="ok">✓ bootloader rollback</td><td class="ok">✓</td></tr>
+          <tr><td>ESP32 family (tested on ESP32-C6, builds for ESP32)</td><td>ESP-IDF component: HTTPS, device tokens, signatures, crash reports, mDNS</td><td class="ok">✓ bootloader rollback</td><td class="ok">✓</td></tr>
           <tr><td>ESP32</td><td>Arduino library</td><td class="ok">✓ image validation</td><td class="no">planned</td></tr>
           <tr><td>ESP8266</td><td>Arduino library</td><td class="ok">✓ image validation</td><td class="no">periodic check-ins</td></tr>
         </tbody>
@@ -126,8 +132,8 @@ tools/release.sh otter-demo 1.1.0</pre>
 
     <section class="block wrap" id="security">
       <h2>Security, honestly</h2>
-      <p class="intro">Accounts, API tokens, HTTPS with Caddy and hashed secrets are there today. On the roadmap:
-        per-device tokens and signed firmware, so that even a compromised server can't push an image you didn't sign.</p>
+      <p class="intro">HTTPS with Caddy, accounts and API tokens, a token per device that can be revoked alone, and
+        signed firmware: devices refuse any image you didn't sign, even from a compromised server.</p>
       <p class="note">Over plain HTTP, anyone on your network could read passwords and serve a malicious firmware.
         Put Otter behind HTTPS before it leaves your desk: <a href="guide.html#https">the guide shows how</a>, and the
         <a href="protocol.html#security">protocol's security section</a> says exactly what is protected.</p>
