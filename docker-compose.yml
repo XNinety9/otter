@@ -21,6 +21,9 @@ services:
       # Home Assistant over MQTT discovery: see "Home Assistant" in the README.
       OTTER_MQTT_URL: ${OTTER_MQTT_URL:-}
       OTTER_MQTT_INSTALL: ${OTTER_MQTT_INSTALL:-}
+      # 1: advertise the server over mDNS for devices built without OTTER_SERVER. Needs the
+      # host network (network_mode: host): multicast doesn't leave the default bridge.
+      OTTER_MDNS: ${OTTER_MDNS:-}
     volumes:
       - otter-data:/data
     restart: unless-stopped

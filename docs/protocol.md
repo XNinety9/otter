@@ -4,7 +4,9 @@ This is the contract between a device agent (ESP-IDF component, Arduino library,
 and the Otter server: JSON requests over HTTP(S), always initiated by the device, so devices
 never need an open port. **Use HTTPS**: see [Security](#security) for what plain HTTP exposes.
 
-All device endpoints live under `/api/v1`.
+All device endpoints live under `/api/v1`. A device built without a server URL can find it on
+the LAN over mDNS: service type `_otter._tcp`, whose TXT record `url` (when present) is the URL
+to use; otherwise `http://<address>:<port>` of the service.
 
 ### Authentication
 

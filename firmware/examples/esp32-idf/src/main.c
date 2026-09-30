@@ -129,7 +129,7 @@ void app_main(void)
     wifi_connect();
 
     otter_config_t otter = {
-        .server_url = OTTER_SERVER,
+        .server_url = OTTER_SERVER, // "" (OTTER_SERVER unset at build time): found over mDNS
 #ifdef OTTER_DEMO_SLEEP_S
         .app_name = "otter-sleepy",
 #else
