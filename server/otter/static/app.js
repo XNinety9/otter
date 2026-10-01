@@ -919,17 +919,17 @@ function renderFirmwares() {
       <td><span class="ver">${esc(f.version)}</span>${f.signed ? ` <span class="signed" title="Signed: devices built with the public key check it">🔏</span>` : ""}${
         f.crash_count ? ` <span class="crash-chip" title="Crash reports from devices running it">💥 ${f.crash_count}</span>` : ""}</td>
       <td${f.compressed_size ? ` title="Downloaded compressed: ${bytes(f.compressed_size)}"` : ""}>${bytes(f.size)}${
-        f.compressed_size ? ` <span class="muted">(${bytes(f.compressed_size)} zipped)</span>` : ""}</td>
+        f.compressed_size ? `<div class="sub muted">${bytes(f.compressed_size)} zipped</div>` : ""}</td>
       <td class="mono muted" title="${esc(f.sha256)}">${esc(f.sha256.slice(0, 12))}…</td>
       <td title="${esc(new Date(f.uploaded_at).toLocaleString())}">${ago(f.uploaded_at)}</td>
       <td><select class="channel-select" aria-label="Publish on channel">${channelOptions(f.channel, "—")}</select></td>
-      <td class="muted">${esc(f.notes)}</td>
-      <td class="actions">
-        ${f.has_factory && installFamily(f.hw) ? `<button class="install ghost" title="Install on a board plugged into this computer">Install…</button>` : ""}
-        <button class="staged ghost" title="Release ${esc(f.app)} ${esc(f.version)} progressively, in stages">Staged…</button>
-        <button class="rollout ghost" title="Deploy to every ${esc(f.app)} / ${esc(f.hw)} device${state.filter.tag ? ` tagged #${esc(state.filter.tag)}` : ""} not on this version">Roll out${state.filter.tag ? ` to #${esc(state.filter.tag)}` : ""}</button>
+      <td class="muted notes">${esc(f.notes)}</td>
+      <td class="actions"><div class="row-actions">
+        ${f.has_factory && installFamily(f.hw) ? `<button class="install" title="Install on a board plugged into this computer">Install…</button>` : ""}
+        <button class="staged" title="Release ${esc(f.app)} ${esc(f.version)} progressively, in stages">Staged…</button>
+        <button class="rollout" title="Deploy to every ${esc(f.app)} / ${esc(f.hw)} device${state.filter.tag ? ` tagged #${esc(state.filter.tag)}` : ""} not on this version">Roll out${state.filter.tag ? ` to #${esc(state.filter.tag)}` : ""}</button>
         <button class="delete ghost danger" title="Delete">✕</button>
-      </td>
+      </div></td>
     </tr>`).join("");
   $("#no-firmwares").hidden = state.firmwares.length > 0;
   $("#firmware-count").textContent = state.firmwares.length || "";

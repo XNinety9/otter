@@ -142,6 +142,8 @@ tr[data-status="off"] .avatar { --tone: var(--muted); }
 .newer { font-family: system-ui, sans-serif; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 99px; color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .ver { font-family: var(--mono); font-size: 12.5px; padding: 2px 8px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); }
 td.fw-app { font-weight: 600; }
+#firmwares td.notes { white-space: normal; min-width: 110px; }  /* the column that gives way */
+#firmwares td .sub { font-size: 12px; margin-top: 1px; }
 tr.offline td:not(.actions):not(.check) { opacity: .55; }
 th.check, td.check { width: 32px; }
 .update-col { width: 240px; }
@@ -192,6 +194,11 @@ input[type="checkbox"] { accent-color: var(--accent); }
 @keyframes pulse { 50% { opacity: .5; } }
 
 .actions { text-align: right; }
+/* A firmware's actions: one row, real buttons; deleting stays discreet. */
+.row-actions { display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+.row-actions button:not(.ghost) { padding: 4px 10px; font-size: 13px; white-space: nowrap; }
+.row-actions button:not(.ghost):hover { border-color: var(--accent); color: var(--accent); }
+.row-actions .install { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 
 .upload { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 12px; padding: 16px; background: var(--surface); border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 12px; }
 .upload-title { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
