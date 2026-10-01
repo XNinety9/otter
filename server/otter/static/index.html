@@ -70,6 +70,7 @@
     <section id="firmwares-section">
       <div class="section-head">
         <h2>Firmwares <span class="count" id="firmware-count"></span></h2>
+        <button id="install-btn" class="ghost" title="Install a firmware on a board plugged into this computer">⚡ Flash a new board</button>
       </div>
       <form id="upload" class="upload">
         <div class="upload-title"><strong>Upload a firmware</strong><span class="muted">or let <code>tools/release.sh</code> do it</span></div>
@@ -203,6 +204,22 @@
         </div>
       </section>
     </div>
+  </dialog>
+
+  <dialog id="install-dialog" aria-labelledby="install-title">
+    <form method="dialog" class="install">
+      <div class="install-head">
+        <h2 id="install-title">⚡ Flash a new board</h2>
+        <button class="ghost" value="close" aria-label="Close">✕</button>
+      </div>
+      <p class="muted">Plug the board into this computer over USB. Its flash is erased, then the firmware is
+        written. If the firmware speaks Improv (the ESP-IDF example does), you then pick its Wi-Fi network here.</p>
+      <label>Firmware <select id="install-fw"></select></label>
+      <p class="install-none" hidden>No firmware can be installed yet: upload one with its <code>factory.bin</code>
+        (<code>tools/push.sh</code> and <code>tools/release.sh</code> do it when the build made one).</p>
+      <p class="install-unsupported" hidden></p>
+      <div class="install-action"></div>
+    </form>
   </dialog>
 
   <dialog id="rollout-dialog" aria-labelledby="rollout-title">

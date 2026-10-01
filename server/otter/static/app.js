@@ -915,6 +915,7 @@ function renderFirmwares() {
       <td><select class="channel-select" aria-label="Publish on channel">${channelOptions(f.channel, "—")}</select></td>
       <td class="muted">${esc(f.notes)}</td>
       <td class="actions">
+        ${f.has_factory && installFamily(f.hw) ? `<button class="install ghost" title="Install on a board plugged into this computer">Install…</button>` : ""}
         <button class="staged ghost" title="Release ${esc(f.app)} ${esc(f.version)} progressively, in stages">Staged…</button>
         <button class="rollout ghost" title="Deploy to every ${esc(f.app)} / ${esc(f.hw)} device${state.filter.tag ? ` tagged #${esc(state.filter.tag)}` : ""} not on this version">Roll out${state.filter.tag ? ` to #${esc(state.filter.tag)}` : ""}</button>
         <button class="delete ghost danger" title="Delete">✕</button>
@@ -969,6 +970,8 @@ $("#firmwares tbody").addEventListener("click", async (e) => {
     if (!targets.length) return toast(`${fw.app} ${fw.version} is too big for the OTA slot of every ${scope}.`, "err");
     // With a tag, let the server resolve its members: same result, one source of truth.
     await deploy(fw.id, tag ? { tags: [tag] } : { device_ids: targets.map((d) => d.id) }, targets.length, tag);
+  } else if (e.target.closest(".install")) {
+    openInstallDialog(fw.id);
   } else if (e.target.closest(".staged")) {
     openRolloutDialog(fw);
   } else if (e.target.closest(".delete")) {
@@ -1280,3 +1283,52 @@ async function start() {
 }
 
 start();
+
+// --- Installing on a new board (#92) -------------------------------------------
+// ESP Web Tools writes a firmware's factory image over Web Serial, then sets the Wi-Fi with
+// Improv. Web Serial needs Chrome or Edge, and a secure page: localhost, or HTTPS.
+
+const ESP_WEB_TOOLS = "https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module";
+const installDialog = $("#install-dialog");
+
+// Same rule as the server: "esp32s3", "esp32s3-cam" → ESP32-S3; "esp8266-1m" → ESP8266.
+function installFamily(hw) {
+  const m = /^esp(8266|32(c2|c3|c5|c6|c61|h2|p4|s2|s3)?)(?![a-z0-9])/i.exec(hw);
+  return m && (m[1] === "8266" ? "ESP8266" : `ESP32${m[2] ? `-${m[2].toUpperCase()}` : ""}`);
+}
+
+function renderInstallButton() {
+  const id = $("#install-fw").value;
+  $(".install-action", installDialog).innerHTML = id && !$(".install-unsupported", installDialog).textContent
+    ? `<esp-web-install-button manifest="/api/firmwares/${id}/manifest.json">
+         <button slot="activate" type="button" class="primary">Install on the board…</button>
+       </esp-web-install-button>`
+    : "";
+}
+
+function openInstallDialog(id) {
+  const installable = state.firmwares
+    .filter((f) => f.has_factory && installFamily(f.hw))
+    .sort((a, b) => a.app.localeCompare(b.app) || a.hw.localeCompare(b.hw) || compareVersions(b.version, a.version));
+  $("#install-fw").innerHTML = installable.map((f) =>
+    `<option value="${f.id}">${esc(f.app)} ${esc(f.version)} · ${esc(installFamily(f.hw))} (${esc(f.hw)})</option>`).join("");
+  if (id) $("#install-fw").value = String(id);
+  $("#install-fw").closest("label").hidden = !installable.length;
+  $(".install-none", installDialog).hidden = installable.length > 0;
+  const unsupported = $(".install-unsupported", installDialog);
+  // Insecure pages don't even get navigator.serial: check that first.
+  unsupported.textContent = !window.isSecureContext
+    ? `USB access needs a secure page: open the dashboard on http://localhost:${location.port || 80} from the computer the board is plugged into, or over HTTPS.`
+    : !("serial" in navigator)
+      ? "This browser can't reach USB ports: open the dashboard in Chrome or Edge."
+      : "";
+  unsupported.hidden = !unsupported.textContent;
+  if (!unsupported.textContent && !customElements.get("esp-web-install-button")) {
+    import(ESP_WEB_TOOLS).catch(() => toast("Couldn't load ESP Web Tools (no Internet access?)", "err"));
+  }
+  renderInstallButton();
+  installDialog.showModal();
+}
+
+$("#install-btn").addEventListener("click", () => openInstallDialog());
+$("#install-fw").addEventListener("change", renderInstallButton);

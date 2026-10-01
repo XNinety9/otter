@@ -222,6 +222,7 @@ class FirmwareOut(BaseModel):
     has_elf: bool = False
     crash_count: int = 0
     compressed_size: int | None = None
+    has_factory: bool = False
 
 
 class DeploymentOut(BaseModel):

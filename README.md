@@ -245,6 +245,24 @@ With ESP-IDF, a new firmware is marked valid once it reaches the server (or when
 reports the deployment as failed. The ESP8266 has no such safety net: only the image header
 and SHA-256 are checked before rebooting.
 
+### Install on a new board from the browser
+
+Once a firmware is in Otter, new boards can get it without PlatformIO: plug the board into
+your computer, click **⚡ Flash a new board** in the Firmwares section (or **Install…** on a
+firmware), pick the board's serial port, and the dashboard erases it and writes the firmware
+with [ESP Web Tools](https://esphome.github.io/esp-web-tools/). With the ESP-IDF example, which
+speaks Improv, you then pick its Wi-Fi network in the same dialog.
+
+- Builds of the examples also make `factory.bin`, the whole flash (bootloader, partitions, app),
+  with `firmware/scripts/factory_image.py`; `tools/push.sh` and `tools/release.sh` upload it
+  with the image. Add the script to your own projects' `extra_scripts` for the same.
+- USB access from a web page (Web Serial) needs Chrome or Edge, and a secure page: open the
+  dashboard on `http://localhost:8000` from the computer the board is plugged into, or over
+  [HTTPS](#https).
+- ESP Web Tools loads from unpkg.com: the browser needs Internet access.
+- A board that was already in Otter and gets erased loses its device token: re-enroll it in its
+  details page.
+
 ## Remote commands
 
 From a device's panel, or for the selected devices in the list: **Reboot**, **Identify** (blink
