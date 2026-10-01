@@ -8,6 +8,7 @@ import pytest
 from elftools.elf.elffile import ELFFile
 
 from otter.storage import APP_DESC_ELF_SHA256, APP_DESC_MAGIC
+from conftest import fake_image
 from test_channels import ids
 
 MAC = "aa:bb:cc:00:00:01"
@@ -98,6 +99,14 @@ def test_the_wrong_elf_is_refused(client, elf):
     res = client.post("/api/firmwares", data={"app": "weather", "hw": "esp32", "version": "1.1.0"}, files=files)
     assert (res.status_code, res.json()["detail"]) == (422, "this ELF file isn't the one the image was built from")
     assert client.get("/api/firmwares").json() == []
+
+
+def test_an_esp8266_image_is_kept_without_its_elf(client, elf):
+    # tools/push.sh sends the ELF whenever the build made one: ESP8266 images can't use it.
+    files = {"file": ("fw.bin", fake_image(b"esp8266")), "elf": ("fw.elf", elf["data"])}
+    res = client.post("/api/firmwares", data={"app": "weather", "hw": "esp8266", "version": "1.1.0"}, files=files)
+    assert res.status_code == 201, res.text
+    assert res.json()["has_elf"] is False
 
 
 def test_xtensa_backtraces_are_used_as_is(client, checkin, elf):
