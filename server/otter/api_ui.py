@@ -285,7 +285,9 @@ def upload_firmware(
         signature=signature, elf_sha256=image_elf_sha256(firmware_path(sha)),
         compressed_size=compress_firmware(sha, size),
     )
-    if elf is not None:
+    # An image that doesn't name its ELF (ESP8266) can't use one: keep the image, skip the ELF,
+    # which tools/push.sh sends whenever the build made one.
+    if elf is not None and fw.elf_sha256:
         try:
             attach_elf(fw, elf)
         except ValueError as exc:
