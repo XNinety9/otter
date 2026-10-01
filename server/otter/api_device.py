@@ -18,9 +18,13 @@ from .db import SessionLocal, get_session, utcnow
 from .device_auth import DeviceAuth, authenticate, check_access, new_token
 from .events import broadcaster, wakeups
 from .metrics import CHECKINS, CRASHES, DOWNLOAD_BYTES, DOWNLOADS
+from .logs import device_logs
 from .notify import notifier
 from .models import CRASH_RESETS, Command, Deployment, Device, Firmware
-from .schemas import CheckinIn, CheckinOut, CommandResultIn, CompressedImage, ConfigOrder, CrashIn, DeltaPatch, DeviceOut, ProgressIn, UpdateOrder
+from .schemas import (
+    CheckinIn, CheckinOut, CommandResultIn, CompressedImage, ConfigOrder, CrashIn, DeltaPatch, DeviceOut, LogsIn, ProgressIn,
+    UpdateOrder,
+)
 from .storage import compressed_path, delta_path, delta_size, firmware_path, image_hash
 
 
@@ -69,6 +73,20 @@ async def checkin(body: CheckinIn, request: Request, auth: DeviceAuth = Depends(
                 # nobody listens here, so deliver nothing and don't overwrite its newer state.
                 break
     return answer
+
+
+@router.post("/logs", status_code=204)
+def receive_logs(body: LogsIn, auth: DeviceAuth = Depends(authenticate)):
+    """Log lines from a device asked to send them (see logs.py)."""
+    with SessionLocal() as session:
+        device = session.scalar(select(Device).where(Device.mac == body.mac)) or _unknown_device()
+        check_access(auth, device)
+        device_id = device.id
+    device_logs.add(device_id, [line.rstrip() for line in body.lines])
+
+
+def _unknown_device():
+    raise HTTPException(404, "unknown device: check in first")
 
 
 def token_lost(session, device: Device) -> None:
@@ -195,7 +213,10 @@ def record_checkin(
             commands=commands.as_orders(sent),
             token=token,
             config=config_order,
+            logs_s=device_logs.order(device.id) if body.logs else None,
         )
+        if answer.logs_s is not None:
+            device_logs.told(device.id)
         return answer, device.last_seen
 
 

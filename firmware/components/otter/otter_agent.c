@@ -395,6 +395,7 @@ static char *build_checkin_body(void)
         cJSON_AddNumberToObject(obj, "boot_count", s_boot_count);
     }
     cJSON_AddStringToObject(obj, "config_version", s_config_version); /* "": none yet */
+    cJSON_AddBoolToObject(obj, "logs", !s_one_shot); /* can send live logs (#96) */
     if (s_next_checkin_s) {
         cJSON_AddNumberToObject(obj, "next_checkin_s", s_next_checkin_s);
     }
@@ -734,6 +735,132 @@ static void report_crash(void) {}
 /* --- Check-in (continued) ------------------------------------------------- */
 
 /* Returns true when the server answered. Fills order when an update is scheduled. */
+/* --- Live logs (#96) -------------------------------------------------------
+ * esp_log output is also copied into a ring buffer. When Otter asks for the logs (logs_s
+ * in a check-in answer, while someone watches the device's page), a task sends the buffered
+ * lines every LOG_SEND_PERIOD_MS until then: first the last ones kept, for context. */
+
+#define LOG_RING_SIZE 4096
+#define LOG_CHUNK_MAX 200 /* longest piece of a line copied at once */
+#define LOG_LINE_MAX 500  /* longest line sent */
+#define LOG_SEND_PERIOD_MS 2000
+
+static char s_log_ring[LOG_RING_SIZE];
+static size_t s_log_head, s_log_len; /* the oldest byte is at head - len */
+static portMUX_TYPE s_log_mux = portMUX_INITIALIZER_UNLOCKED;
+static vprintf_like_t s_log_prev;
+static volatile int64_t s_logs_until_us; /* esp_timer time to stop sending at; 0: don't send */
+static TaskHandle_t s_log_task;
+
+static int log_hook(const char *fmt, va_list args)
+{
+    va_list copy;
+    va_copy(copy, args);
+    int ret = s_log_prev ? s_log_prev(fmt, args) : vprintf(fmt, args);
+    char chunk[LOG_CHUNK_MAX];
+    int n = vsnprintf(chunk, sizeof(chunk), fmt, copy);
+    va_end(copy);
+    if (n <= 0) {
+        return ret;
+    }
+    if (n >= (int)sizeof(chunk)) {
+        n = sizeof(chunk) - 1;
+        chunk[n - 1] = '\n'; /* cut, but still a line */
+    }
+    portENTER_CRITICAL(&s_log_mux);
+    for (int i = 0; i < n; i++) {
+        s_log_ring[s_log_head] = chunk[i];
+        s_log_head = (s_log_head + 1) % LOG_RING_SIZE;
+    }
+    s_log_len = s_log_len + n > LOG_RING_SIZE ? LOG_RING_SIZE : s_log_len + n;
+    portEXIT_CRITICAL(&s_log_mux);
+    return ret;
+}
+
+/* Moves the complete lines kept so far into out (NUL-terminated); returns their length. */
+static size_t take_logs(char *out, size_t size)
+{
+    portENTER_CRITICAL(&s_log_mux);
+    size_t n = s_log_len < size - 1 ? s_log_len : size - 1;
+    size_t start = (s_log_head + LOG_RING_SIZE - s_log_len) % LOG_RING_SIZE;
+    for (size_t i = 0; i < n; i++) {
+        out[i] = s_log_ring[(start + i) % LOG_RING_SIZE];
+    }
+    portEXIT_CRITICAL(&s_log_mux);
+    size_t end = n;
+    while (end > 0 && out[end - 1] != '\n') {
+        end--; /* a line still being written: next time */
+    }
+    out[end] = '\0';
+    portENTER_CRITICAL(&s_log_mux);
+    s_log_len -= end < s_log_len ? end : s_log_len;
+    portEXIT_CRITICAL(&s_log_mux);
+    return end;
+}
+
+/* {"mac": …, "lines": […]}, without colors and carriage returns. */
+static char *logs_body(char *text)
+{
+    cJSON *root = cJSON_CreateObject();
+    char mac[18];
+    mac_string(mac);
+    cJSON_AddStringToObject(root, "mac", mac);
+    cJSON *lines = cJSON_AddArrayToObject(root, "lines");
+    char *rest = NULL;
+    for (char *line = strtok_r(text, "\n", &rest); line; line = strtok_r(NULL, "\n", &rest)) {
+        char clean[LOG_LINE_MAX + 1];
+        size_t len = 0;
+        for (const char *c = line; *c && len < LOG_LINE_MAX; c++) {
+            if (*c == '\033') { /* an ANSI color: skip to its final letter */
+                while (*c && *c != 'm') {
+                    c++;
+                }
+                if (!*c) {
+                    break;
+                }
+            } else if (*c != '\r') {
+                clean[len++] = *c;
+            }
+        }
+        clean[len] = '\0';
+        if (len) {
+            cJSON_AddItemToArray(lines, cJSON_CreateString(clean));
+        }
+    }
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    return body;
+}
+
+static void log_task(void *arg)
+{
+    esp_http_client_handle_t keep = NULL;
+    char *text = malloc(LOG_RING_SIZE + 1);
+    while (text && esp_timer_get_time() < s_logs_until_us) {
+        if (take_logs(text, LOG_RING_SIZE + 1)) {
+            char *body = logs_body(text);
+            if (body) {
+                post_json("/api/v1/logs", body, NULL, 0, HTTP_TIMEOUT_MS, &keep);
+                free(body);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(LOG_SEND_PERIOD_MS));
+    }
+    close_kept(&keep);
+    free(text);
+    s_log_task = NULL;
+    vTaskDelete(NULL);
+}
+
+static void send_logs_for(int seconds)
+{
+    s_logs_until_us = seconds > 0 ? esp_timer_get_time() + (int64_t)seconds * 1000000 : 0;
+    if (seconds > 0 && !s_log_task) {
+        ESP_LOGI(TAG, "sending logs to Otter for %d s", seconds);
+        xTaskCreate(log_task, "otter_logs", 8192, NULL, 3, &s_log_task);
+    }
+}
+
 static bool checkin(update_order_t *order)
 {
     order->deployment_id = 0;
@@ -777,6 +904,11 @@ static bool checkin(update_order_t *order)
         cJSON *commands = cJSON_GetObjectItem(root, "commands");
         if (cJSON_IsArray(commands)) {
             run_commands(commands);
+        }
+        cJSON *logs = cJSON_GetObjectItem(root, "logs_s");
+        if (cJSON_IsNumber(logs) && !s_one_shot) {
+            send_logs_for(logs->valueint);
+            s_checkin_again = true; /* the answer came early for this alone: poll again now */
         }
         cJSON *update = cJSON_GetObjectItem(root, "update");
         if (cJSON_IsObject(update)) {
@@ -1283,6 +1415,7 @@ static esp_err_t init(const otter_config_t *config)
     }
     count_boot();
     load_token();
+    s_log_prev = esp_log_set_vprintf(log_hook);
     s_config_lock = xSemaphoreCreateMutex();
     load_config();
     if (!s_cfg.rollback_timeout_s) {

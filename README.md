@@ -340,6 +340,15 @@ Espressif's `esp_delta_ota`): a few tens of KB instead of a megabyte. The device
 really runs the patch's base first, and a retry downloads the whole image. Nothing to configure:
 the smallest transfer is picked each time. Other agents keep downloading the plain image.
 
+## Live logs
+
+**Live logs** in a device's details page shows its log output as it runs, without a USB cable:
+the device hears about it at once (through its long poll), sends the last lines it kept, then
+new ones every 2 s while the page stays open, for 10 minutes at a time renewed by the page.
+Nothing flows when nobody watches. The server keeps the last 500 lines per device, in memory
+only. The ESP-IDF agent hooks `esp_log` for this (lines still go to the serial port); the
+Arduino library doesn't send logs.
+
 ## Crash reports
 
 When an ESP-IDF device crashes, the core dump stays in its `coredump` partition; at its next

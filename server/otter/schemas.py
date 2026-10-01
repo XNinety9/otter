@@ -64,6 +64,8 @@ class CheckinIn(BaseModel):
     # A device that sleeps between check-ins (deep sleep) says when it will be back, so it
     # doesn't count as offline meanwhile. Omitted: it checks in every checkin_interval_s.
     next_checkin_s: int | None = Field(default=None, ge=1, le=7 * 86400)
+    # The agent can send live logs (#96): only those are asked to.
+    logs: bool = False
     # Long polling: if no update is ready, the server may hold the request up to this long.
     wait_s: int = Field(default=0, ge=0)
 
@@ -74,6 +76,16 @@ class CheckinIn(BaseModel):
         if len(hexdigits) != 12:
             raise ValueError("invalid MAC address")
         return ":".join(hexdigits[i : i + 2] for i in range(0, 12, 2))
+
+
+class LogsIn(BaseModel):
+    mac: str
+    lines: list[Annotated[str, Field(max_length=512)]] = Field(max_length=200)
+
+    @field_validator("mac")
+    @classmethod
+    def normalize_mac(cls, v: str) -> str:
+        return CheckinIn.normalize_mac(v)
 
 
 class UpdateOrder(BaseModel):
@@ -125,10 +137,13 @@ class CheckinOut(BaseModel):
     token: str | None = None
     # The whole remote configuration, when the device's config_version is outdated.
     config: ConfigOrder | None = None
+    # Live logs (#96): send them to /api/v1/logs for this many seconds (0: stop). Only when
+    # that changes.
+    logs_s: int | None = None
 
     def has_news(self) -> bool:
         """Whether the device must hear back now (else a long poll may wait)."""
-        return bool(self.update or self.commands or self.config)
+        return bool(self.update or self.commands or self.config) or self.logs_s is not None
 
 
 class ConfigIn(BaseModel):

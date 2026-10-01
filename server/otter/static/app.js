@@ -524,6 +524,7 @@ function openPanel(id) {
   panel.showModal();
   panel.focus();  // not its first button, which would show a focus ring
   loadCommands(id);
+  loadLogs(id);
   loadConfig(id, "device");
   loadCrashes(id);
 }
@@ -899,7 +900,10 @@ panel.addEventListener("click", (e) => {
     panel.close();
   }
 });
-panel.addEventListener("close", () => { panelDeviceId = null; });
+panel.addEventListener("close", () => {
+  stopWatchingLogs();
+  panelDeviceId = null;
+});
 
 // --- Firmwares ---------------------------------------------------------------
 
@@ -1249,6 +1253,10 @@ function connect() {
   es.addEventListener("resync", () => resync());
   es.addEventListener("rollouts", () => loadRollouts());
   es.addEventListener("command", (e) => commandArrived(JSON.parse(e.data)));
+  es.addEventListener("logs", (e) => {
+    const { device_id, lines } = JSON.parse(e.data);
+    if (device_id === panelDeviceId) appendLogs(lines);
+  });
   es.addEventListener("crash", (e) => {
     if (JSON.parse(e.data).device_id === panelDeviceId) loadCrashes(panelDeviceId);
     api("GET", "/api/firmwares").then((f) => { state.firmwares = f; renderFirmwares(); }).catch(() => {});
@@ -1335,3 +1343,77 @@ function openInstallDialog(id) {
 
 $("#install-btn").addEventListener("click", () => openInstallDialog());
 $("#install-fw").addEventListener("change", renderInstallButton);
+
+// --- Live logs (#96) ---------------------------------------------------------
+// The details page asks the device for its logs while it's open (renewed every few minutes),
+// and shows the lines as they come over the event stream.
+
+const LOGS_RENEW_MS = 4 * 60 * 1000;
+let logsWatching = false;
+let logsRenew = null;
+
+const logLevel = (text) => (/^[EWIDV] \(/.test(text) ? text[0] : "");
+
+function logLine({ t, text }) {
+  const time = new Date(t * 1000).toLocaleTimeString([], { hour12: false });
+  return `<span class="log ${logLevel(text)}"><span class="log-time">${time}</span>${esc(text)}</span>`;
+}
+
+function appendLogs(lines) {
+  const box = $(".logs", panel);
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+  box.insertAdjacentHTML("beforeend", lines.map(logLine).join(""));
+  while (box.childElementCount > 500) box.firstElementChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+  if (logsWatching) $(".logs-state", panel).textContent = "live";
+}
+
+function renderLogsState() {
+  $(".logs-toggle", panel).textContent = logsWatching ? "■ Stop" : "▶ Live logs";
+  $(".logs-toggle", panel).classList.toggle("on", logsWatching);
+  $(".logs", panel).classList.toggle("watching", logsWatching);
+}
+
+async function loadLogs(id) {
+  $(".logs", panel).innerHTML = "";
+  $(".logs-state", panel).textContent = "";
+  try {
+    const lines = await api("GET", `/api/devices/${id}/logs`);
+    if (id === panelDeviceId) appendLogs(lines);
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function watchLogs() {
+  const id = panelDeviceId;
+  try {
+    await api("POST", `/api/devices/${id}/logs/watch`);
+  } catch (e) {
+    toast(e.message, "err");
+    return stopWatchingLogs(false);
+  }
+  if (!logsWatching || id !== panelDeviceId) return;
+  if (!$(".logs", panel).childElementCount || $(".logs-state", panel).textContent !== "live") {
+    $(".logs-state", panel).textContent = "waiting for the device…";
+  }
+}
+
+function stopWatchingLogs(tell = true) {
+  if (logsWatching && tell && panelDeviceId != null) {
+    api("POST", `/api/devices/${panelDeviceId}/logs/stop`).catch(() => {});
+  }
+  logsWatching = false;
+  clearInterval(logsRenew);
+  logsRenew = null;
+  $(".logs-state", panel).textContent = "";
+  renderLogsState();
+}
+
+$(".logs-toggle", panel).addEventListener("click", () => {
+  if (logsWatching) return stopWatchingLogs();
+  logsWatching = true;
+  renderLogsState();
+  watchLogs();
+  logsRenew = setInterval(watchLogs, LOGS_RENEW_MS);
+});
