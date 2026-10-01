@@ -1,15 +1,16 @@
 """Endpoints used by the web UI."""
 
 import asyncio
+from datetime import UTC
 import re
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from . import commands, config, crashes, devconfig, signing
+from . import commands, config, crashes, devconfig, history, signing
 from .api_device import publish_device
 from .api_rollouts import reconcile_channels
 from .auth import require_user
@@ -237,7 +238,23 @@ def delete_device(device_id: int, session: Session = Depends(get_session)):
     delete_unused_tags(session)
     session.commit()
     device_logs.forget(device_id)
+    history.forget(device_id)
     broadcaster.publish("device_deleted", {"id": device_id})
+
+
+# --- History (#98, see history.py) ---------------------------------------------
+
+
+@router.get("/devices/{device_id}/history")
+def device_history(device_id: int, hours: int = Query(24, ge=1, le=168), session: Session = Depends(get_session)):
+    """Signal and free memory over the last hours, and the restarts in that time."""
+    session.get(Device, device_id) or _404("device")
+    rows = history.samples(session, device_id, hours)
+    stamp = lambda at: at.replace(tzinfo=UTC).isoformat()  # noqa: E731
+    return {
+        "samples": [{"t": stamp(s.at), "rssi": s.rssi, "free_heap": s.free_heap} for s in rows],
+        "restarts": [{"t": stamp(s.at), "reason": s.restart} for s in rows if s.restart],
+    }
 
 
 # --- Live logs (#96, see logs.py) ---------------------------------------------

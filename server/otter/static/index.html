@@ -130,6 +130,21 @@
 
       <section class="pcard wide">
         <div class="pcard-head">
+          <h3>History</h3>
+          <div class="seg" role="group" aria-label="Time range">
+            <button type="button" data-hours="24" aria-pressed="true">24 h</button>
+            <button type="button" data-hours="168" aria-pressed="false">7 days</button>
+          </div>
+        </div>
+        <div class="history-charts">
+          <figure class="chart" data-key="rssi"><figcaption>Wi-Fi signal <span class="muted">dBm</span></figcaption><div class="plot"></div></figure>
+          <figure class="chart" data-key="free_heap"><figcaption>Free memory <span class="muted">KB</span></figcaption><div class="plot"></div></figure>
+        </div>
+        <p class="chart-legend muted"></p>
+      </section>
+
+      <section class="pcard wide">
+        <div class="pcard-head">
           <h3>Updates</h3>
           <label class="channel-follow">
             <span class="muted">Channel</span>

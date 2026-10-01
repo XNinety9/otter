@@ -525,6 +525,9 @@ function openPanel(id) {
   panel.focus();  // not its first button, which would show a focus ring
   loadCommands(id);
   loadLogs(id);
+  historyData = null;
+  panel.querySelectorAll(".history-charts .plot").forEach((p) => { p.innerHTML = ""; });
+  loadDeviceHistory(id);
   loadConfig(id, "device");
   loadCrashes(id);
 }
@@ -1416,4 +1419,137 @@ $(".logs-toggle", panel).addEventListener("click", () => {
   renderLogsState();
   watchLogs();
   logsRenew = setInterval(watchLogs, LOGS_RENEW_MS);
+});
+
+// --- History charts (#98) ------------------------------------------------------
+// A sample every 5 minutes: signal and free memory, one chart each (never two scales on one),
+// restarts marked. Hovering shows the nearest sample.
+
+let historyHours = 24;
+let historyData = null;
+const SAMPLE_GAP_MS = 16 * 60 * 1000;  // more than 3 missed samples: the device was away
+const CHARTS = {
+  rssi: { value: (s) => s.rssi, format: (v) => `${v} dBm` },
+  free_heap: { value: (s) => (s.free_heap == null ? null : s.free_heap / 1024), format: (v) => `${Math.round(v)} KB` },
+};
+
+function niceTicks(min, max, count = 3) {
+  const span = max - min || 1;
+  const step = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find((s) => span / s <= count) || span / count;
+  const ticks = [];
+  for (let v = Math.ceil(min / step) * step; v <= max; v += step) ticks.push(v);
+  return ticks;
+}
+
+// Over a week, 5-minute samples are noise: their mean per bucket (a gap still breaks the line).
+function averaged(points, bucketMs) {
+  const buckets = new Map();
+  for (const p of points) {
+    const key = Math.floor(p.t / bucketMs);
+    const b = buckets.get(key) || buckets.set(key, { t: 0, v: 0, n: 0 }).get(key);
+    b.t += p.t; b.v += p.v; b.n += 1;
+  }
+  return [...buckets.values()].map((b) => ({ t: b.t / b.n, v: b.v / b.n }));
+}
+
+function drawChart(figure, samples, restarts, hours) {
+  const plot = $(".plot", figure);
+  const { value, format } = CHARTS[figure.dataset.key];
+  let points = samples.map((s) => ({ t: Date.parse(s.t), v: value(s) })).filter((p) => p.v != null);
+  if (hours > 24) points = averaged(points, 30 * 60 * 1000);
+  if (points.length < 2) {
+    plot.innerHTML = `<p class="chart-empty">${points.length ? "One sample so far" : "No samples yet"}: one comes every 5 minutes.</p>`;
+    return;
+  }
+  const W = Math.max(240, plot.clientWidth), H = 150, L = 40, R = 8, T = 8, B = 22;
+  const end = Date.now(), start = end - hours * 3600 * 1000;
+  let lo = Math.min(...points.map((p) => p.v)), hi = Math.max(...points.map((p) => p.v));
+  const pad = (hi - lo) * 0.15 || Math.abs(hi) * 0.05 || 1;
+  lo -= pad; hi += pad;
+  const x = (t) => L + ((t - start) / (end - start)) * (W - L - R);
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+
+  // Grid and axes: recessive.
+  const yTicks = niceTicks(lo, hi).map((v) =>
+    `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${Math.round(v)}</text>`);
+  const stepH = hours <= 24 ? 6 : 24;
+  const xTicks = [];
+  const first = new Date(start); first.setMinutes(0, 0, 0);
+  for (let t = first.getTime() + 3600e3; t < end; t += 3600e3) {
+    const d = new Date(t);
+    if (d.getHours() % stepH) continue;
+    const text = stepH === 24 ? d.toLocaleDateString([], { weekday: "short" }) : `${String(d.getHours()).padStart(2, "0")}:00`;
+    xTicks.push(`<text class="axis" x="${x(t)}" y="${H - 6}" text-anchor="middle">${text}</text>`);
+  }
+  // The line, broken where the device was away.
+  let path = "";
+  points.forEach((p, i) => {
+    const gap = i === 0 || p.t - points[i - 1].t > (hours > 24 ? 2.5 * 30 * 60 * 1000 : SAMPLE_GAP_MS);
+    path += `${gap ? "M" : "L"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`;
+  });
+  const marks = restarts.map((r) => {
+    const crash = CRASH_RESETS.has(r.reason);
+    const rx = x(Date.parse(r.t));
+    return `<line class="restart${crash ? " crash" : ""}" x1="${rx}" x2="${rx}" y1="${T}" y2="${H - B}"><title>Restarted: ${esc(r.reason.replaceAll("_", " "))}</title></line>`;
+  });
+  plot.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
+         aria-label="${esc($("figcaption", figure).textContent)}: from ${format(Math.min(...points.map((p) => p.v)))} to ${format(Math.max(...points.map((p) => p.v)))}, last ${format(points.at(-1).v)}">
+      ${yTicks.join("")}${xTicks.join("")}${marks.join("")}
+      <path class="line" d="${path}"/>
+      <g class="hover" visibility="hidden"><line class="crosshair" y1="${T}" y2="${H - B}"/><circle r="4"/></g>
+      <rect class="hit" x="${L}" y="0" width="${W - L - R}" height="${H}"/>
+    </svg>
+    <div class="chart-tip" hidden></div>`;
+  const svg = $("svg", plot), hover = $(".hover", svg), tip = $(".chart-tip", plot);
+  $(".hit", svg).addEventListener("mousemove", (e) => {
+    const box = svg.getBoundingClientRect();
+    const t = start + ((e.clientX - box.left) * (W / box.width) - L) / (W - L - R) * (end - start);
+    const p = points.reduce((a, b) => (Math.abs(b.t - t) < Math.abs(a.t - t) ? b : a));
+    const px = x(p.t), py = y(p.v);
+    hover.setAttribute("visibility", "visible");
+    $(".crosshair", hover).setAttribute("x1", px); $(".crosshair", hover).setAttribute("x2", px);
+    $("circle", hover).setAttribute("cx", px); $("circle", hover).setAttribute("cy", py);
+    const when = new Date(p.t).toLocaleString([], { weekday: hours > 24 ? "short" : undefined, hour: "2-digit", minute: "2-digit" });
+    tip.innerHTML = `<strong>${format(p.v)}</strong> <span>${when}</span>`;
+    tip.hidden = false;
+    tip.style.left = `${Math.min(px * (box.width / W), box.width - tip.offsetWidth)}px`;
+  });
+  $(".hit", svg).addEventListener("mouseleave", () => { hover.setAttribute("visibility", "hidden"); tip.hidden = true; });
+}
+
+function renderHistory() {
+  if (!historyData) return;
+  const { samples, restarts } = historyData;
+  panel.querySelectorAll(".history-charts .chart").forEach((f) => drawChart(f, samples, restarts, historyHours));
+  const crashes = restarts.filter((r) => CRASH_RESETS.has(r.reason)).length;
+  const plain = restarts.length - crashes;
+  $(".chart-legend", panel).innerHTML = [
+    plain && `<span class="key"></span> restart${plain > 1 ? `s (${plain})` : ""}`,
+    crashes && `<span class="key crash"></span> ⚠ restart after a crash${crashes > 1 ? `es (${crashes})` : ""}`,
+  ].filter(Boolean).join(" · ") || "No restart in this period.";
+}
+
+async function loadDeviceHistory(id) {
+  try {
+    const data = await api("GET", `/api/devices/${id}/history?hours=${historyHours}`);
+    if (id !== panelDeviceId) return;
+    historyData = data;
+    renderHistory();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+panel.querySelector(".seg").addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-hours]");
+  if (!button) return;
+  historyHours = Number(button.dataset.hours);
+  panel.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b === button)));
+  loadDeviceHistory(panelDeviceId);
+});
+let historyResize;
+window.addEventListener("resize", () => {
+  clearTimeout(historyResize);
+  historyResize = setTimeout(() => panel.open && renderHistory(), 150);
 });
