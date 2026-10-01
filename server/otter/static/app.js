@@ -75,12 +75,14 @@ function isOnline(d) {
 
 // --- Device credentials (per-device tokens) ---------------------------------------
 
-const AUTH_CHIPS = { revoked: "⛔ revoked", awaiting_approval: "awaiting approval" };
+const AUTH_CHIPS = { revoked: "⛔ revoked", awaiting_approval: "awaiting approval", token_lost: "🔑 lost its token" };
 const AUTH_TEXT = {
   token: "Uses its own token: the fleet key alone can't act as this device.",
   fleet_key: "Uses the fleet key (agent without token support, or not enrolled yet).",
   revoked: "Revoked: its check-ins are refused until you re-enroll it.",
   awaiting_approval: "New device awaiting your approval: its check-ins are refused until then.",
+  token_lost: "Checks in with the fleet key only, though it had its own token: refused. Erased or re-flashed? " +
+    "Re-enroll it. If not, someone else may be using the fleet key.",
 };
 
 // Same list as the server: restarts that mean the firmware crashed or the power is weak.
@@ -727,6 +729,7 @@ function deviceStatus(d) {
   const dep = d.last_deployment;
   if (d.auth === "revoked") return ["err", "Revoked"];
   if (d.auth === "awaiting_approval") return ["warn", "Awaiting approval"];
+  if (d.auth === "token_lost") return ["warn", "Lost its token"];
   if (dep && ACTIVE.has(dep.status)) return ["accent", `Updating to ${dep.firmware.version}`];
   if (!isOnline(d)) return ["off", "Offline"];
   return ["ok", d.next_checkin_s ? "Online · sleeps" : "Online"];
@@ -814,7 +817,7 @@ function renderPanel() {
   access.textContent = AUTH_TEXT[d.auth] || d.auth;
   access.className = `access-state ${d.auth}`;
   $(".access .approve", panel).hidden = d.auth !== "awaiting_approval";
-  $(".access .reenroll", panel).hidden = !["token", "revoked"].includes(d.auth);
+  $(".access .reenroll", panel).hidden = !["token", "revoked", "token_lost"].includes(d.auth);
   $(".access .revoke", panel).hidden = d.auth === "revoked";
   const follow = $(".channel-follow select", panel);
   if (document.activeElement !== follow) follow.innerHTML = channelOptions(d.channel, "Manual updates only");
