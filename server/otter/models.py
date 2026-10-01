@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import Column, ForeignKey, String, Table, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, Index, String, Table, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base, utcnow
@@ -251,6 +251,22 @@ class ConfigValue(Base):
     tag: Mapped[str | None] = mapped_column(String(32), index=True)
     key: Mapped[str] = mapped_column(String(32))
     value: Mapped[str]  # JSON: a string, number or boolean
+
+
+class DeviceSample(Base):
+    """A device's signal and free memory at one check-in (#98): one every few minutes, kept a
+    week (see history.py). restart is the reset reason when the device had just restarted."""
+
+    __tablename__ = "device_samples"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"))
+    at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    rssi: Mapped[int | None]
+    free_heap: Mapped[int | None]
+    restart: Mapped[str | None]
+
+    __table_args__ = (Index("ix_device_samples_device_at", "device_id", "at"),)
 
 
 class Crash(Base):

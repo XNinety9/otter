@@ -340,6 +340,13 @@ Espressif's `esp_delta_ota`): a few tens of KB instead of a megabyte. The device
 really runs the patch's base first, and a retry downloads the whole image. Nothing to configure:
 the smallest transfer is picked each time. Other agents keep downloading the plain image.
 
+## History
+
+A device's details page charts its Wi-Fi signal and free memory over the last 24 hours or 7 days,
+with its restarts marked (in red after a crash): a memory leak, or a board that drops off at
+night, shows at a glance. Otter keeps a sample per device every 5 minutes for 7 days, from the
+check-ins (a few MB for a hundred devices).
+
 ## Live logs
 
 **Live logs** in a device's details page shows its log output as it runs, without a USB cable:

@@ -289,6 +289,29 @@ dialog#device-panel::backdrop { background: rgb(10 14 20 / .5); backdrop-filter:
 .info dd { margin: 2px 0 0; overflow-wrap: anywhere; font-weight: 500; }
 .info dd .tag { font-size: 12px; }
 .info dd .radio { display: inline-block; margin: 2px 4px 0 0; padding: 1px 8px; border-radius: 99px; font-size: 12px; background: var(--track); }
+.seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--track); }
+.panel-grid .seg button { border: none; background: none; padding: 3px 10px; font-size: 12px; border-radius: 6px; color: var(--muted); }
+.panel-grid .seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
+.history-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 10px; }
+.chart { margin: 0; min-width: 0; }
+.chart figcaption { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.chart .plot { position: relative; min-height: 150px; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .restart { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.chart .restart.crash { stroke: var(--err); }
+.chart .crosshair { stroke: var(--muted); stroke-width: 1; }
+.chart .hover circle { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.chart .hit { fill: transparent; cursor: crosshair; }
+.chart-tip { position: absolute; top: -6px; transform: translateY(-100%); padding: 4px 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; pointer-events: none; background: var(--text); color: var(--bg); }
+.chart-tip span { opacity: .75; margin-left: 4px; }
+.chart-empty { margin: 0; padding: 50px 0; text-align: center; font-size: 13px; color: var(--muted); }
+.chart-legend { margin: 6px 0 0; font-size: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chart-legend .key { display: inline-block; width: 0; height: 12px; border-left: 1.5px dashed var(--muted); }
+.chart-legend .key.crash { border-color: var(--err); }
+@media (max-width: 760px) { .history-charts { grid-template-columns: minmax(0, 1fr); } }
 .logs-tools { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .logs-toggle.on { color: var(--err); }
 .logs {

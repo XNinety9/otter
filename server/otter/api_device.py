@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import commands, config, crashes, devconfig
+from . import commands, config, crashes, devconfig, history
 from .auth import token_hash
 from .db import SessionLocal, get_session, utcnow
 from .device_auth import DeviceAuth, authenticate, check_access, new_token
@@ -151,6 +151,9 @@ def record_checkin(
             if is_new:
                 notifier.emit("device_new", device_id=device.id)
             raise HTTPException(403, "device awaiting approval in Otter")
+        if device.id is None:
+            session.flush()
+        history.record(session, device, restart=(body.reset_reason or "restart") if rebooted else None)
         # Until the device uses a token, each fleet-key check-in gets a fresh one.
         token = None
         if auth.fleet and device.token_used_at is None:
