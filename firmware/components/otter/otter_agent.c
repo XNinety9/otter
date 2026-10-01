@@ -376,6 +376,12 @@ static char *build_checkin_body(void)
     otter_chip_revision(chip_rev, sizeof(chip_rev));
     cJSON_AddStringToObject(obj, "chip", otter_chip_model());
     cJSON_AddStringToObject(obj, "chip_rev", chip_rev);
+    if (otter_flash_size()) {
+        cJSON_AddNumberToObject(obj, "flash_size", otter_flash_size());
+    }
+    if (otter_psram_size()) {
+        cJSON_AddNumberToObject(obj, "psram_size", otter_psram_size());
+    }
     cJSON_AddStringToObject(obj, "app", s_cfg.app_name);
     cJSON_AddStringToObject(obj, "fw_version", s_cfg.version);
     cJSON_AddNumberToObject(obj, "uptime_s", (double)(esp_timer_get_time() / 1000000));

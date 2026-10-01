@@ -45,6 +45,9 @@ class CheckinIn(BaseModel):
     # revision: shown on the dashboard. hw stays what images are matched on.
     chip: str | None = Field(default=None, max_length=48)
     chip_rev: str | None = Field(default=None, max_length=8, pattern=r"^[0-9]+\.[0-9]+$")
+    # Memory in bytes: the chip's flash, and its PSRAM if any.
+    flash_size: int | None = Field(default=None, ge=0)
+    psram_size: int | None = Field(default=None, ge=0)
     ip: str | None = None
     rssi: int | None = None
     uptime_s: int | None = None
@@ -244,6 +247,8 @@ class DeviceOut(BaseModel):
     hw: str
     chip: str | None = None
     chip_rev: str | None = None
+    flash_size: int | None = None
+    psram_size: int | None = None
     app: str
     fw_version: str
     ip: str | None

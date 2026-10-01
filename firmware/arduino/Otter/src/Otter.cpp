@@ -411,8 +411,11 @@ bool OtterAgent::checkin(Order &order) {
   otter_chip_revision(chipRev, sizeof(chipRev));
   doc["chip"] = otter_chip_model();
   doc["chip_rev"] = chipRev;
+  if (otter_flash_size()) doc["flash_size"] = otter_flash_size();
+  if (otter_psram_size()) doc["psram_size"] = otter_psram_size();
 #else
   doc["chip"] = esp_is_8285() ? "ESP8285" : "ESP8266EX";
+  doc["flash_size"] = ESP.getFlashChipRealSize();
 #endif
   doc["app"] = _cfg.app;
   doc["fw_version"] = _cfg.version;

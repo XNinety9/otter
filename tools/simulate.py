@@ -27,6 +27,7 @@ APPS = [("weather-station", "esp32"), ("plant-sensor", "esp8266"), ("led-strip",
 SLOT_SIZES = {"esp32": 0x140000, "esp8266": 0xFB000, "esp32c3": 0x1E0000}
 # Exact chip and revision, as the agents report them.
 CHIPS = {"esp32": ("ESP32-D0WD-V3", "3.1"), "esp8266": ("ESP8266EX", None), "esp32c3": ("ESP32-C3 (QFN32)", "0.4")}
+FLASH_SIZES = {"esp32": 4 << 20, "esp8266": 1 << 20, "esp32c3": 4 << 20}
 
 
 TOKENS: dict[str, str] = {}
@@ -128,6 +129,7 @@ class FakeDevice:
                 "hw": self.hw,
                 "chip": CHIPS[self.hw][0],
                 "chip_rev": CHIPS[self.hw][1],
+                "flash_size": FLASH_SIZES[self.hw],
                 "app": self.app,
                 "fw_version": self.version,
                 "ip": self.ip,
