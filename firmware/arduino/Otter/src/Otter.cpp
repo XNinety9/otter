@@ -413,9 +413,13 @@ bool OtterAgent::checkin(Order &order) {
   doc["chip_rev"] = chipRev;
   if (otter_flash_size()) doc["flash_size"] = otter_flash_size();
   if (otter_psram_size()) doc["psram_size"] = otter_psram_size();
+  char radio[80];
+  otter_chip_radio(radio, sizeof(radio));
+  doc["radio"] = radio;
 #else
   doc["chip"] = esp_is_8285() ? "ESP8285" : "ESP8266EX";
   doc["flash_size"] = ESP.getFlashChipRealSize();
+  doc["radio"] = "Wi-Fi 4";
 #endif
   doc["app"] = _cfg.app;
   doc["fw_version"] = _cfg.version;

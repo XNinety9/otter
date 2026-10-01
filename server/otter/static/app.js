@@ -797,6 +797,7 @@ function renderPanel() {
     d.chip_rev && ["Revision", esc(`v${d.chip_rev}`)],
     ["Flash", d.flash_size ? esc(memSize(d.flash_size)) : "—"],
     d.psram_size && ["PSRAM", esc(memSize(d.psram_size))],
+    d.radio && ["Radio", d.radio.split(", ").map((r) => `<span class="radio">${esc(r)}</span>`).join("")],
     ["OTA slot", slotInfo(d)],
     ["Images built for", `<span class="tag">${esc(d.hw)}</span>`],
   ]);

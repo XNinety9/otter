@@ -48,6 +48,8 @@ class CheckinIn(BaseModel):
     # Memory in bytes: the chip's flash, and its PSRAM if any.
     flash_size: int | None = Field(default=None, ge=0)
     psram_size: int | None = Field(default=None, ge=0)
+    # Its radios, e.g. "Wi-Fi 6, Bluetooth 5 (LE), 802.15.4 (Thread, Zigbee)".
+    radio: str | None = Field(default=None, max_length=96)
     ip: str | None = None
     rssi: int | None = None
     uptime_s: int | None = None
@@ -249,6 +251,7 @@ class DeviceOut(BaseModel):
     chip_rev: str | None = None
     flash_size: int | None = None
     psram_size: int | None = None
+    radio: str | None = None
     app: str
     fw_version: str
     ip: str | None

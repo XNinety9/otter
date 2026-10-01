@@ -3,7 +3,7 @@
 /*
  * The exact chip an ESP32 runs on, named as esptool names it ("ESP32-D0WD-V3",
  * "ESP32-C6FH4 (QFN32)"…), its revision ("0.1"), read from esp_chip_info() and the eFuses,
- * and its memory: flash and PSRAM sizes. Otter shows them on the dashboard.
+ * its memory (flash and PSRAM sizes) and its radios. Otter shows them on the dashboard.
  *
  * The ESP-IDF component and the Arduino library each have a copy of this file: keep them
  * identical (CI checks).
@@ -110,4 +110,32 @@ static inline uint32_t otter_psram_size(void)
 #else
     return 0;
 #endif
+}
+
+/* Its radios, e.g. "Wi-Fi 6, Bluetooth 5 (LE), 802.15.4 (Thread, Zigbee)"; "" without any. */
+static inline void otter_chip_radio(char *buf, size_t size)
+{
+    esp_chip_info_t info;
+    esp_chip_info(&info);
+#if CONFIG_IDF_TARGET_ESP32C5
+    const char *wifi = "Wi-Fi 6 (2.4 + 5 GHz)";
+#elif CONFIG_IDF_TARGET_ESP32C6 || CONFIG_IDF_TARGET_ESP32C61
+    const char *wifi = "Wi-Fi 6";
+#else
+    const char *wifi = "Wi-Fi 4";
+#endif
+    const char *bt = (info.features & CHIP_FEATURE_BT) ? "Bluetooth 4.2 (Classic + LE)"
+                   : (info.features & CHIP_FEATURE_BLE) ? "Bluetooth 5 (LE)" : NULL;
+    const char *parts[] = {
+        (info.features & CHIP_FEATURE_WIFI_BGN) ? wifi : NULL,
+        bt,
+        (info.features & CHIP_FEATURE_IEEE802154) ? "802.15.4 (Thread, Zigbee)" : NULL,
+    };
+    size_t len = 0;
+    buf[0] = '\0';
+    for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
+        if (parts[i] && len < size) {
+            len += snprintf(buf + len, size - len, "%s%s", len ? ", " : "", parts[i]);
+        }
+    }
 }

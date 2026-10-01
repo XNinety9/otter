@@ -36,3 +36,8 @@ def test_memory_is_stored(client, checkin):
     assert (device["flash_size"], device["psram_size"]) == (8 << 20, 8 << 20)
     checkin(chip="ESP32-S3 (QFN56)", chip_rev="0.2", flash_size=8 << 20)  # rebuilt without PSRAM support
     assert client.get("/api/devices").json()[0]["psram_size"] is None
+
+
+def test_radio_is_stored(client, checkin):
+    checkin(chip="ESP32-C6 (QFN40)", chip_rev="0.1", radio="Wi-Fi 6, Bluetooth 5 (LE), 802.15.4 (Thread, Zigbee)")
+    assert client.get("/api/devices").json()[0]["radio"] == "Wi-Fi 6, Bluetooth 5 (LE), 802.15.4 (Thread, Zigbee)"
