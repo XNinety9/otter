@@ -45,6 +45,7 @@ jobs:
           - { project: esp32-idf, env: esp32c6 }
           - { project: esp32-idf, env: esp32c6-sleepy }
           - { project: arduino, env: esp8266 }
+          - { project: arduino, env: esp8266-1m }
           - { project: arduino, env: esp32 }
     env:
       # Placeholders: the build only needs them to exist.

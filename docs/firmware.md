@@ -271,9 +271,23 @@ blinks `LED_BUILTIN` when the board defines one.
 | Signed firmware | Checked | Not supported: given a key, it refuses every update |
 | HTTPS | `caCert` | `caCert`, and the clock must be set first (`configTime()`) |
 | Battery devices | `otter.checkinOnce(config, seconds)` instead of `begin()` | Same (`ESP.deepSleep()` needs GPIO16 wired to RST) |
+| Where updates go | The other OTA slot | After the running sketch, copied over it at the next boot |
+| Rollback | A new firmware that fails is rolled back | None: a firmware that boots but can't reach Otter needs USB |
 
 The Arduino library downloads plain images: patches, compressed downloads and crash reports
 are only in the ESP-IDF agent.
+
+### ESP8266 with 1 MB of flash
+
+The ESP8266 has no OTA slots: an update is written in the free space after the running sketch,
+so the sketch area must hold two copies. The usual 1 MB layout keeps 256 KB for a filesystem
+and leaves room for sketches up to ~380 KB, less than the example's. The example's
+`esp8266-1m` environment drops the filesystem instead (`eagle.flash.1m.ld`): sketches up to
+~500 KB can then update over the air. It reports its own hardware name, `esp8266-1m`, since an
+ESP8266 refuses images built for another flash size.
+
+Without rollback, try a new firmware on one device before the others: a staged rollout (the
+**Roll out** button on a firmware) does it for you.
 
 ## Build-time settings
 

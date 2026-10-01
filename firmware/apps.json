@@ -5,7 +5,7 @@
   },
   "otter-demo-arduino": {
     "project": "firmware/examples/arduino",
-    "environments": { "esp8266": "esp8266", "esp32": "esp32" }
+    "environments": { "esp8266": "esp8266", "esp8266-1m": "esp8266-1m", "esp32": "esp32" }
   },
   "otter-sleepy": {
     "project": "firmware/examples/esp32-idf",
