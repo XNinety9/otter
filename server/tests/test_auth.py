@@ -112,3 +112,11 @@ def test_cli_users(client, monkeypatch, capsys):
 
     with pytest.raises(SystemExit):
         run_cli(monkeypatch, capsys, "create-user", "eve", "--password-stdin", stdin="short\n")
+
+
+def test_dashboard_files_are_revalidated(client):
+    for path in ("/", "/app.js", "/style.css"):
+        res = client.get(path)
+        assert res.headers["cache-control"] == "no-cache", path
+    etag = client.get("/app.js").headers["etag"]
+    assert client.get("/app.js", headers={"If-None-Match": etag}).status_code == 304

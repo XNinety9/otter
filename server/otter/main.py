@@ -87,4 +87,14 @@ app.include_router(api_auth.router)
 app.include_router(api_device.router)
 app.include_router(api_ui.router)
 app.include_router(api_rollouts.router)
-app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")
+class DashboardFiles(StaticFiles):
+    """The dashboard's files, revalidated at each load (a 304 when unchanged): without it,
+    browsers keep running the old code after an upgrade (#102)."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/", DashboardFiles(directory=Path(__file__).parent / "static", html=True), name="static")
