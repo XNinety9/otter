@@ -55,6 +55,7 @@ Content-Type: application/json
   "chip_rev": "3.1",              // optional, chip revision: major.minor
   "flash_size": 4194304,          // optional, bytes of flash on the chip
   "psram_size": 8388608,          // optional, bytes of PSRAM, when there is some
+  "radio": "Wi-Fi 4, Bluetooth 5 (LE)", // optional, its radios, shown in the UI
   "app": "weather-station",       // required, firmware application name
   "fw_version": "1.2.0",          // required, currently running version
   "ip": "192.168.1.42",           // optional, server falls back to the TCP peer address

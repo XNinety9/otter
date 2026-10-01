@@ -379,6 +379,9 @@ static char *build_checkin_body(void)
     if (otter_flash_size()) {
         cJSON_AddNumberToObject(obj, "flash_size", otter_flash_size());
     }
+    char radio[80];
+    otter_chip_radio(radio, sizeof(radio));
+    cJSON_AddStringToObject(obj, "radio", radio);
     if (otter_psram_size()) {
         cJSON_AddNumberToObject(obj, "psram_size", otter_psram_size());
     }

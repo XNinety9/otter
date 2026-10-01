@@ -95,6 +95,7 @@ def record_checkin(
         if body.chip:  # agents from before #74 don't send it
             device.chip, device.chip_rev = body.chip, body.chip_rev
             device.flash_size, device.psram_size = body.flash_size, body.psram_size
+            device.radio = body.radio
         device.app = body.app
         device.fw_version = body.fw_version
         rebooted = not is_new and restarted(device, body)

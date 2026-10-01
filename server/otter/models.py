@@ -48,6 +48,7 @@ class Device(Base):
     chip_rev: Mapped[str | None]  # its revision, e.g. "0.1"
     flash_size: Mapped[int | None]  # bytes (#80)
     psram_size: Mapped[int | None]  # bytes, None without PSRAM
+    radio: Mapped[str | None]  # e.g. "Wi-Fi 4, Bluetooth 5 (LE)" (#88)
     app: Mapped[str]
     fw_version: Mapped[str]
     ip: Mapped[str | None]
