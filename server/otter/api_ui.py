@@ -146,7 +146,7 @@ def revoke_device(device_id: int, session: Session = Depends(get_session)):
 def reenroll_device(device_id: int, session: Session = Depends(get_session)):
     """Forgets the device's token: its next check-in with the fleet key gets a new one."""
     device = session.get(Device, device_id) or _404("device")
-    device.revoked_at = device.token_used_at = device.token_hash = None
+    device.revoked_at = device.token_used_at = device.token_hash = device.token_lost_at = None
     device.approved = True
     session.commit()
     publish_device(device)

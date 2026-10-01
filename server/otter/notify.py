@@ -37,6 +37,7 @@ NTFY_TAGS = {
     "device_online": ["white_check_mark"],
     "device_new": ["new"],
     "device_crashed": ["boom"],
+    "device_token_lost": ["key"],
     "test": ["test_tube"],
 }
 DISCORD_COLOR = {INFO: 0x2F6FDF, WARNING: 0xC98A00, ERROR: 0xD64545}
@@ -165,6 +166,12 @@ def build(event: str, ids: dict) -> Message | None:
             return Message(event, f"{label(device)} is back online", where, INFO, data)
         if event == "device_new":
             return Message(event, f"New device: {label(device)}", where, INFO, data)
+        if event == "device_token_lost":
+            body = (
+                "It checks in with the fleet key only, though it had its own token: refused. Erased or "
+                "re-flashed? Re-enroll it in Otter. If not, someone else may be using the fleet key."
+            )
+            return Message(event, f"{label(device)} lost its token", body, WARNING, data)
         if event == "device_crashed":
             data["reset_reason"] = ids["reason"]  # the device may have restarted again since
             reason = ids["reason"].replace("_", " ")

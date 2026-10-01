@@ -71,6 +71,18 @@ async def checkin(body: CheckinIn, request: Request, auth: DeviceAuth = Depends(
     return answer
 
 
+def token_lost(session, device: Device) -> None:
+    """A device with its own token checked in with the fleet key only: refused, but shown."""
+    first = device.token_lost_at is None
+    # Devices retry every few seconds: write it, and tell the UI, at most once a minute.
+    if first or utcnow() - device.token_lost_at > timedelta(minutes=1):
+        device.token_lost_at = utcnow()
+        session.commit()
+        publish_device(device)
+    if first:
+        notifier.emit("device_token_lost", device_id=device.id)
+
+
 def record_checkin(
     body: CheckinIn, request: Request, auth: DeviceAuth, seen: datetime | None = None
 ) -> tuple[CheckinOut, datetime | None]:
@@ -89,7 +101,12 @@ def record_checkin(
             device.approved = not config.DEVICE_APPROVAL
             session.add(device)
         else:
-            check_access(auth, device)
+            try:
+                check_access(auth, device)
+            except HTTPException as exc:
+                if exc.status_code == 401 and device.token_used_at is not None:
+                    token_lost(session, device)
+                raise
 
         device.hw = body.hw
         if body.chip:  # agents from before #74 don't send it

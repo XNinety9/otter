@@ -109,3 +109,26 @@ def test_approval_mode(client, monkeypatch):
 
     client.post(f"/api/devices/{ids(client)[A]}/approve")
     assert enroll(client, A)
+
+
+def test_a_device_that_lost_its_token_shows_up(client):
+    enroll(client, A)
+    # Erased and re-flashed: back with the fleet key only.
+    assert checkin(client, A, FLEET).status_code == 401
+    assert auth_state(client, A) == "token_lost"
+    # Re-enrolling clears it, and the next fleet-key check-in gets a new token.
+    device_id = ids(client)[A]
+    assert client.post(f"/api/devices/{device_id}/reenroll").status_code == 200
+    assert auth_state(client, A) == "fleet_key"
+    assert checkin(client, A, FLEET).json()["token"].startswith("otd_")
+
+
+def test_a_lost_token_is_notified_once(client, monkeypatch):
+    from otter.notify import notifier
+
+    events = []
+    monkeypatch.setattr(notifier, "emit", lambda event, **ids: events.append(event))
+    enroll(client, A)
+    for _ in range(3):
+        checkin(client, A, FLEET)
+    assert events.count("device_token_lost") == 1

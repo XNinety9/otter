@@ -66,6 +66,9 @@ class Device(Base):
     token_used_at: Mapped[datetime | None]  # once set, the fleet key no longer works for this device
     revoked_at: Mapped[datetime | None]
     approved: Mapped[bool] = mapped_column(default=True, server_default="1")  # False: awaiting approval
+    # When it last checked in with the fleet key only, though it has its own token: refused.
+    # Erased or re-flashed, or someone else with the fleet key (#94). Cleared by re-enrolling.
+    token_lost_at: Mapped[datetime | None]
     config_version: Mapped[str | None]  # version of the configuration the device reports having (#23)
     next_checkin_s: Mapped[int | None]  # when a sleeping device said it would be back (#20)
     first_seen: Mapped[datetime] = mapped_column(default=utcnow)
@@ -86,11 +89,13 @@ class Device(Base):
 
     @property
     def auth(self) -> str:
-        """revoked, awaiting_approval, token (uses its own token) or fleet_key."""
+        """revoked, awaiting_approval, token_lost, token (uses its own token) or fleet_key."""
         if self.revoked_at is not None:
             return "revoked"
         if not self.approved:
             return "awaiting_approval"
+        if self.token_lost_at is not None:
+            return "token_lost"
         return "token" if self.token_used_at is not None else "fleet_key"
 
     def fits(self, firmware: "Firmware") -> bool:
