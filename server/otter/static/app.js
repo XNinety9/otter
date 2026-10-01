@@ -698,28 +698,93 @@ function uptime(s) {
   return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`;
 }
 
+// Overall state shown in the panel's header: [class, text].
+function deviceStatus(d) {
+  const dep = d.last_deployment;
+  if (d.auth === "revoked") return ["err", "Revoked"];
+  if (d.auth === "awaiting_approval") return ["warn", "Awaiting approval"];
+  if (dep && ACTIVE.has(dep.status)) return ["accent", `Updating to ${dep.firmware.version}`];
+  if (!isOnline(d)) return ["off", "Offline"];
+  return ["ok", d.next_checkin_s ? "Online · sleeps" : "Online"];
+}
+
+const SIGNAL_WORDS = ["", "Weak", "Fair", "Good", "Excellent"];
+const signalBars = (rssi) => (rssi == null ? 0 : rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : 1);
+
+// A stat tile of the panel: [label, value HTML, footnote HTML, extra class].
+const statTile = ([name, value, foot, cls = ""]) => `
+  <div class="stat ${cls}"><div class="stat-label">${esc(name)}</div><div class="stat-value">${value}</div><div class="stat-foot">${foot}</div></div>`;
+
+function firmwareTile(d) {
+  const dep = d.last_deployment;
+  const value = `<span class="mono">${esc(d.fw_version)}</span>`;
+  if (dep && ACTIVE.has(dep.status)) {
+    return ["Firmware", value, `<div class="bar"><div class="fill" style="width:${dep.progress}%"></div></div>
+      <span class="accent">${esc(dep.status)} ${esc(dep.firmware.version)} · ${dep.progress}%</span>`, "busy"];
+  }
+  const newest = latestVersions().get(`${d.app}/${d.hw}`);
+  if (newest && compareVersions(d.fw_version, newest) < 0) return ["Firmware", value, `<span class="accent">${esc(newest)} available</span>`];
+  if (dep?.status === "failed") return ["Firmware", value, `<span class="err">last update failed</span>`];
+  return ["Firmware", value, newest ? `<span class="ok">✓ up to date</span>` : esc(d.app)];
+}
+
+function statTiles(d) {
+  const bars = signalBars(d.rssi);
+  return [
+    firmwareTile(d),
+    ["Signal",
+      d.rssi == null ? "—" : `<span class="signal big">${[1, 2, 3, 4].map((i) => `<i class="${i <= bars ? "on" : ""}"></i>`).join("")}</span> ${d.rssi} <small>dBm</small>`,
+      SIGNAL_WORDS[bars] || "no report", bars === 1 ? "weak" : ""],
+    ["Uptime", esc(uptime(d.uptime_s)), crashed(d) ? `<span class="err">⚠ ${esc(lastReset(d))}</span>` : esc(lastReset(d))],
+    ["Free memory",
+      d.free_heap == null ? "—" : esc(bytes(d.free_heap)),
+      d.min_free_heap == null ? "heap" : `lowest ${esc(bytes(d.min_free_heap))}`],
+  ].map(statTile).join("");
+}
+
+// The OTA slot, with how much of it the running image takes when Otter knows that image.
+function slotInfo(d) {
+  if (d.ota_slot_size == null) return "—";
+  const fw = state.firmwares.find((f) => f.app === d.app && f.hw === d.hw && f.version === d.fw_version);
+  if (!fw) return esc(bytes(d.ota_slot_size));
+  const pct = Math.min(100, Math.round((fw.size / d.ota_slot_size) * 100));
+  return `${esc(bytes(d.ota_slot_size))} <span class="muted">· image ${pct}%</span>
+    <div class="meter${pct > 85 ? " full" : ""}"><i style="width:${pct}%"></i></div>`;
+}
+
+const infoList = (rows) =>
+  rows.filter(Boolean).map(([k, v, cls = ""]) => `<div><dt>${esc(k)}</dt><dd class="${cls}">${v}</dd></div>`).join("");
+
 function renderPanel() {
   const d = state.devices.get(panelDeviceId);
   if (!d) return panel.close();
+  const [statusCls, statusText] = deviceStatus(d);
+  panel.dataset.status = statusCls;
   $("#panel-title").textContent = label(d);
-  $(".panel-sub", panel).textContent = d.name ? d.mac : "";
-  const info = [
-    ["App", d.app],
-    ["Chip", `${chipName(d)}${d.chip_rev ? ` · rev ${d.chip_rev}` : ""}`],
-    ["Memory", memory(d, " flash") || "—"],
-    ["Hardware", `${d.hw} (images built for it)`],
-    ["Firmware", d.fw_version],
-    ["OTA slot", d.ota_slot_size == null ? "—" : bytes(d.ota_slot_size)],
-    ["IP", d.ip || "—"],
-    ["MAC", d.mac],
-    ["Signal", d.rssi == null ? "—" : `${d.rssi} dBm`],
-    ["Uptime", uptime(d.uptime_s)],
-    ["Check-ins", d.next_checkin_s ? `sleeps, wakes every ${d.next_checkin_s < 120 ? `${d.next_checkin_s} s` : uptime(d.next_checkin_s)}` : "stays connected"],
-    ["Last reset", lastReset(d), crashed(d) ? "crash" : ""],
-    ["Free heap", d.free_heap == null ? "—" : `${bytes(d.free_heap)}${d.min_free_heap == null ? "" : ` · min ${bytes(d.min_free_heap)}`}`],
-    ["Last seen", `${ago(d.last_seen)} · ${isOnline(d) ? "online" : "offline"}`],
-    ["First seen", new Date(d.first_seen).toLocaleString()],
-  ];
+  $(".status-pill", panel).textContent = statusText;
+  $(".panel-sub", panel).innerHTML = [
+    `<span class="app-name">${esc(d.app)}</span>`,
+    esc(shortChip(d)),
+    d.name ? `<span class="mono">${esc(d.mac)}</span>` : "",
+    d.ip ? `<span class="mono">${esc(d.ip)}</span>` : "",
+  ].filter(Boolean).join('<span class="sep">·</span>');
+  $(".stat-row", panel).innerHTML = statTiles(d);
+  $(".info-hw", panel).innerHTML = infoList([
+    ["Chip", esc(chipName(d))],
+    d.chip_rev && ["Revision", esc(`v${d.chip_rev}`)],
+    ["Flash", d.flash_size ? esc(memSize(d.flash_size)) : "—"],
+    d.psram_size && ["PSRAM", esc(memSize(d.psram_size))],
+    ["OTA slot", slotInfo(d)],
+    ["Images built for", `<span class="tag">${esc(d.hw)}</span>`],
+  ]);
+  $(".info-net", panel).innerHTML = infoList([
+    ["IP address", d.ip ? `<span class="mono">${esc(d.ip)}</span>` : "—"],
+    ["MAC address", `<span class="mono">${esc(d.mac)}</span>`],
+    ["Check-ins", esc(d.next_checkin_s ? `wakes every ${d.next_checkin_s < 120 ? `${d.next_checkin_s} s` : uptime(d.next_checkin_s)}` : "stays connected")],
+    ["Last seen", `${esc(ago(d.last_seen))}`],
+    ["First seen", esc(new Date(d.first_seen).toLocaleDateString(undefined, { dateStyle: "medium" }))],
+    d.boot_count != null && ["Boots", esc(`#${d.boot_count}`)],
+  ]);
   const access = $(".access-state", panel);
   access.textContent = AUTH_TEXT[d.auth] || d.auth;
   access.className = `access-state ${d.auth}`;
@@ -730,7 +795,6 @@ function renderPanel() {
   if (document.activeElement !== follow) follow.innerHTML = channelOptions(d.channel, "Manual updates only");
   $(".tag-list", panel).innerHTML = d.tags.map((t) => `
     <span class="tag-chip">#${esc(t)}<button data-tag="${esc(t)}" aria-label="Remove tag ${esc(t)}">×</button></span>`).join("");
-  $(".info", panel).innerHTML = info.map(([k, v, cls = ""]) => `<div><dt>${esc(k)}</dt><dd class="${cls}">${esc(v)}</dd></div>`).join("");
 
   // Refetch the history only when the latest deployment changes state.
   const dep = d.last_deployment;
@@ -758,6 +822,7 @@ async function loadHistory(id) {
       <td class="details">${esc(h.error)}</td>
     </tr>`).join("");
   $(".history-empty", panel).hidden = history.length > 0;
+  $(".history", panel).hidden = history.length === 0;
 }
 
 $(".close", panel).addEventListener("click", () => panel.close());
