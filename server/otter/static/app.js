@@ -104,13 +104,18 @@ function bytes(n) {
 
 // --- Devices -----------------------------------------------------------------
 
+const CHIP_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+  <rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2.5v3.5M15 2.5v3.5M9 18v3.5M15 18v3.5M2.5 9H6M2.5 15H6M18 9h3.5M18 15h3.5"/></svg>`;
+
 function createRow(id) {
   const tr = document.createElement("tr");
   tr.dataset.id = id;
   tr.innerHTML = `
     <td class="check"><input type="checkbox" class="sel" aria-label="Select"></td>
-    <td><button class="name link" title="Details and history"></button><div class="mac mono muted"></div><div class="row-tags"></div></td>
-    <td><span class="app"></span> <span class="hw tag"></span></td>
+    <td class="who"><div class="who-wrap"><span class="avatar" aria-hidden="true">${CHIP_ICON}</span><div>
+      <button class="name link" title="Details and history"></button><div class="mac mono muted"></div><div class="row-tags"></div>
+    </div></div></td>
+    <td><div class="app"></div><div class="hw"></div></td>
     <td class="fw mono"></td>
     <td class="ip mono"></td>
     <td><span class="signal"><i></i><i></i><i></i><i></i></span></td>
@@ -125,7 +130,10 @@ function createRow(id) {
     e.target.checked ? state.selected.add(id) : state.selected.delete(id);
     renderToolbar();
   });
-  $(".name", tr).addEventListener("click", () => openPanel(id));
+  // The whole row opens the details, except its own controls.
+  tr.addEventListener("click", (e) => {
+    if (!e.target.closest("input, button:not(.name), select, a")) openPanel(id);
+  });
   $(".cancel", tr).addEventListener("click", async () => {
     const dep = state.devices.get(id).last_deployment;
     try { await api("POST", `/api/deployments/${dep.id}/cancel`); } catch (e) { toast(e.message, "err"); }
@@ -195,9 +203,12 @@ function updateRow(tr, d) {
   const hw = $(".hw", tr);
   hw.textContent = [shortChip(d), memory(d)].filter(Boolean).join(" · ");
   hw.title = `${chipName(d)}${d.chip_rev ? `, revision ${d.chip_rev}` : ""} · firmware images for ${d.hw}`;
+  tr.dataset.status = deviceStatus(d)[0];
+  const newest = latestVersions().get(`${d.app}/${d.hw}`);
   $(".fw", tr).innerHTML = active
     ? `${esc(d.fw_version)} <span class="target">→ ${esc(dep.firmware.version)}</span>`
-    : esc(d.fw_version);
+    : esc(d.fw_version) + (newest && compareVersions(d.fw_version, newest) < 0
+      ? ` <span class="newer" title="${esc(newest)} is available">↑ ${esc(newest)}</span>` : "");
   $(".ip", tr).textContent = d.ip || "—";
 
   const bars = d.rssi == null ? 0 : d.rssi > -55 ? 4 : d.rssi > -65 ? 3 : d.rssi > -75 ? 2 : 1;
@@ -369,10 +380,25 @@ function renderFilters() {
   const latest = latestVersions();
   const searched = searchedDevices();
   renderTagFilter();
-  $(".chips").innerHTML = Object.entries(FILTERS).map(([key, f]) => `
-    <button class="chip" data-show="${key}" aria-pressed="${state.filter.show === key}">
-      ${f.label}<span class="n">${searched.filter((d) => f.test(d, latest)).length}</span>
+  const n = (key) => searched.filter((d) => FILTERS[key].test(d, latest)).length;
+  const total = n("all"), online = n("online"), updating = n("updating"), outdated = n("outdated"), failed = n("failed");
+  const apps = new Set(searched.map((d) => d.app)).size;
+  const progress = searched.filter(FILTERS.updating.test).map((d) => d.last_deployment.progress);
+  const tiles = [
+    ["all", "Devices", total, plural(apps, "app"), ""],
+    ["online", "Online", `${online}<small> / ${total}</small>`,
+      `<div class="bar"><div class="fill" style="width:${total ? (100 * online) / total : 0}%"></div></div>${
+        total - online ? `${total - online} offline` : "all connected"}`, "ok"],
+    ["updating", "Updating", updating,
+      updating ? `${Math.round(progress.reduce((a, b) => a + b, 0) / updating)} % on average` : "nothing in progress", updating ? "accent" : ""],
+    ["outdated", "Outdated", outdated, outdated ? "a newer firmware exists" : "all up to date", outdated ? "warn" : ""],
+    ["failed", "Failed", failed, failed ? "last update failed" : "no failed update", failed ? "err" : ""],
+  ];
+  $(".overview").innerHTML = tiles.map(([key, name, value, foot, tone]) => `
+    <button class="tile ${tone}" data-show="${key}" aria-pressed="${state.filter.show === key}">
+      <span class="tile-label">${name}</span><span class="tile-value">${value}</span><span class="tile-foot">${foot}</span>
     </button>`).join("");
+  $("#device-count").textContent = state.filter.show === "all" ? total : `${n(state.filter.show)} of ${total}`;
 }
 
 function setFilter(change) {
@@ -400,8 +426,8 @@ function loadFilterFromUrl() {
 $("#tag-filter").addEventListener("change", (e) => setFilter({ tag: e.target.value }));
 
 $("#search").addEventListener("input", (e) => setFilter({ q: e.target.value }));
-$(".chips").addEventListener("click", (e) => {
-  const chip = e.target.closest(".chip");
+$(".overview").addEventListener("click", (e) => {
+  const chip = e.target.closest(".tile");
   if (chip) setFilter({ show: chip.dataset.show });
 });
 $(".clear-filters").addEventListener("click", () => {
@@ -437,13 +463,10 @@ function renderDevices() {
   renderSummary();
 }
 
+// The tab's title says when updates are running, for a dashboard left in the background.
 function renderSummary() {
-  const all = [...state.devices.values()];
-  const online = all.filter(isOnline).length;
-  const updating = all.filter((d) => d.last_deployment && ACTIVE.has(d.last_deployment.status)).length;
-  let text = `${all.length} device${all.length === 1 ? "" : "s"} · ${online} online`;
-  if (updating) text += ` · ${updating} updating`;
-  $("#summary").textContent = text;
+  const updating = [...state.devices.values()].filter((d) => ACTIVE.has(d.last_deployment?.status)).length;
+  document.title = updating ? `Otter · ${updating} updating` : "Otter";
 }
 
 function renderToolbar() {
@@ -879,9 +902,9 @@ function renderFirmwares() {
   const tbody = $("#firmwares tbody");
   tbody.innerHTML = state.firmwares.map((f) => `
     <tr data-id="${f.id}">
-      <td>${esc(f.app)}</td>
+      <td class="fw-app">${esc(f.app)}</td>
       <td><span class="tag">${esc(f.hw)}</span></td>
-      <td class="mono">${esc(f.version)}${f.signed ? ` <span class="signed" title="Signed: devices built with the public key check it">🔏</span>` : ""}${
+      <td><span class="ver">${esc(f.version)}</span>${f.signed ? ` <span class="signed" title="Signed: devices built with the public key check it">🔏</span>` : ""}${
         f.crash_count ? ` <span class="crash-chip" title="Crash reports from devices running it">💥 ${f.crash_count}</span>` : ""}</td>
       <td${f.compressed_size ? ` title="Downloaded compressed: ${bytes(f.compressed_size)}"` : ""}>${bytes(f.size)}${
         f.compressed_size ? ` <span class="muted">(${bytes(f.compressed_size)} zipped)</span>` : ""}</td>
@@ -896,6 +919,7 @@ function renderFirmwares() {
       </td>
     </tr>`).join("");
   $("#no-firmwares").hidden = state.firmwares.length > 0;
+  $("#firmware-count").textContent = state.firmwares.length || "";
 
   const known = (key) => [...new Set([...state.devices.values(), ...state.firmwares].map((x) => x[key]))].sort();
   $("#known-apps").innerHTML = known("app").map((v) => `<option value="${esc(v)}">`).join("");
