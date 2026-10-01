@@ -59,6 +59,9 @@ void setup() {
   config.app = "otter-demo-arduino";
   config.version = APP_VERSION;
   config.fleetKey = OTTER_FLEET_KEY;
+#ifdef OTTER_HW
+  config.hw = OTTER_HW;  // set by environments whose images don't fit the others (esp8266-1m)
+#endif
   // [ADAPT 4] Optional: signed updates only, and the CA of an https:// server (both passed at
   // build time, see version.py).
 #ifdef OTTER_SIGNING_PUBKEY_PEM
