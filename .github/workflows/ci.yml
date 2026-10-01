@@ -44,6 +44,7 @@ jobs:
           - { project: esp32-idf, env: esp32 }
           - { project: esp32-idf, env: esp32c6 }
           - { project: esp32-idf, env: esp32c6-sleepy }
+          - { project: esp32-idf, env: esp32s3 }
           - { project: arduino, env: esp8266 }
           - { project: arduino, env: esp8266-1m }
           - { project: arduino, env: esp32 }
