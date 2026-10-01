@@ -14,6 +14,7 @@ from .api_device import publish_device
 from .api_rollouts import reconcile_channels
 from .auth import require_user
 from .db import get_session, utcnow
+from .logs import device_logs
 from .events import broadcaster, wakeups
 from .notify import INFO, Message, notifier
 from .models import OPEN_STATES, Command, Crash, Deployment, Device, Firmware, Tag, device_tags
@@ -235,7 +236,30 @@ def delete_device(device_id: int, session: Session = Depends(get_session)):
     session.flush()
     delete_unused_tags(session)
     session.commit()
+    device_logs.forget(device_id)
     broadcaster.publish("device_deleted", {"id": device_id})
+
+
+# --- Live logs (#96, see logs.py) ---------------------------------------------
+
+
+@router.get("/devices/{device_id}/logs")
+def get_logs(device_id: int, session: Session = Depends(get_session)):
+    session.get(Device, device_id) or _404("device")
+    return device_logs.get(device_id)
+
+
+@router.post("/devices/{device_id}/logs/watch")
+def watch_logs(device_id: int, session: Session = Depends(get_session)):
+    """Asks the device for its logs, for the next WATCH_S seconds (call again to renew)."""
+    device = session.get(Device, device_id) or _404("device")
+    return {"watch_s": device_logs.watch(device.id, device.mac)}
+
+
+@router.post("/devices/{device_id}/logs/stop", status_code=204)
+def stop_logs(device_id: int, session: Session = Depends(get_session)):
+    device = session.get(Device, device_id) or _404("device")
+    device_logs.stop(device.id, device.mac)
 
 
 # --- Firmwares -------------------------------------------------------------

@@ -214,6 +214,23 @@ Content-Type: application/json
 The server finds the firmware whose image names that ELF hash, and decodes the addresses with
 its ELF file when it has it.
 
+### Live logs
+
+An agent that can send its logs says so in its check-ins (`"logs": true`). When someone watches
+the device's logs in the dashboard, the next check-in answer (at once, for a long poll) carries
+`"logs_s": 600`: send log lines for that many seconds, starting with the last ones kept, then
+check in again right away. `"logs_s": 0` means stop. It only comes when it changes.
+
+```
+POST /api/v1/logs
+Content-Type: application/json
+
+{"mac": "a4:cf:12:34:56:78", "lines": ["I (1234) otter: …", "W (1240) wifi: …"]}   → 204
+```
+
+At most 200 lines of 512 characters per request; the ESP-IDF agent sends every 2 s. The server
+keeps the last 500 lines of each device, in memory only.
+
 ## 2. Progress reports
 
 While applying an update, the device reports its progress. Reports are best effort: a lost

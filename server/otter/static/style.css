@@ -289,6 +289,20 @@ dialog#device-panel::backdrop { background: rgb(10 14 20 / .5); backdrop-filter:
 .info dd { margin: 2px 0 0; overflow-wrap: anywhere; font-weight: 500; }
 .info dd .tag { font-size: 12px; }
 .info dd .radio { display: inline-block; margin: 2px 4px 0 0; padding: 1px 8px; border-radius: 99px; font-size: 12px; background: var(--track); }
+.logs-tools { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.logs-toggle.on { color: var(--err); }
+.logs {
+  margin: 10px 0 0; height: 260px; overflow: auto; padding: 10px 12px; border-radius: 10px;
+  background: #0b0f14; color: #c9d4de; font: 12px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+}
+.logs:empty::before { content: "Press Live logs: the device sends its log lines while this page is open (ESP-IDF agent)."; color: #6c7a89; font-family: system-ui, sans-serif; }
+.logs.watching:empty::before { content: "Waiting for the device… It hears about it at once, or at its next check-in."; }
+.log { display: block; }
+.log-time { color: #5d6b7a; margin-right: 10px; user-select: none; }
+.log.E { color: #ff8f8f; }
+.log.W { color: #f0c36a; }
+.log.D, .log.V { color: #8090a0; }
 .meter { height: 4px; margin-top: 6px; border-radius: 99px; background: var(--track); overflow: hidden; }
 .meter i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
 .meter.full i { background: var(--warn); }
