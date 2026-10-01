@@ -6,8 +6,9 @@ Playwright's video encoder (`playwright install ffmpeg`) and ffmpeg:
     uvx --with playwright python site/capture.py http://localhost:8766 otk_… admin 'password'
 
 It names and tags the simulated weather stations, starts a staged rollout of the newest
-weather-station firmware, records the dashboard until the rollout completes, then encodes
-MP4 and WebM files and a poster image with ffmpeg.
+weather-station firmware, opens the details of a station while it updates, records the
+dashboard until the rollout completes, then encodes MP4 and WebM files and a poster image
+with ffmpeg.
 """
 
 import json
@@ -63,8 +64,19 @@ def main():
         page = context.new_page()
         page.goto(BASE + "/?q=station")
         page.wait_for_selector("#devices tbody tr")
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(2000)
         api("POST", "/api/rollouts", {"firmware_id": firmware["id"], "stages": [34, 100], "soak_s": 0})
+        # Once the first station downloads, open its details and look around.
+        page.wait_for_selector("#devices tr .update.st-downloading", timeout=60_000)
+        page.wait_for_timeout(2500)
+        page.locator("#devices tr:has(.update.st-downloading) td.ip").first.click()
+        page.wait_for_timeout(3500)
+        scroll = "top => document.querySelector('#device-panel').scrollTo({top, behavior: 'smooth'})"
+        page.evaluate(scroll, 420)
+        page.wait_for_timeout(2800)
+        page.evaluate(scroll, 0)
+        page.wait_for_timeout(2500)
+        page.keyboard.press("Escape")
         page.wait_for_selector(".rollout .badge.completed", timeout=120_000)
         page.wait_for_timeout(2500)
         context.close()

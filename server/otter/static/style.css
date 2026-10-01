@@ -215,6 +215,7 @@ dialog#device-panel {
   box-shadow: 0 24px 64px rgb(0 0 0 / .32);
 }
 dialog#device-panel[open] { animation: panel-in .18s ease-out; }
+dialog#device-panel:focus { outline: none; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(8px) scale(.99); } }
 dialog#device-panel::backdrop { background: rgb(10 14 20 / .5); backdrop-filter: blur(2px); }
 #device-panel[data-status="err"] { --status: var(--err); }

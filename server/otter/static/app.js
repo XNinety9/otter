@@ -520,6 +520,7 @@ function openPanel(id) {
   panelConfig = null;
   renderPanel();
   panel.showModal();
+  panel.focus();  // not its first button, which would show a focus ring
   loadCommands(id);
   loadConfig(id, "device");
   loadCrashes(id);

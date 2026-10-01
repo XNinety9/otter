@@ -11,7 +11,9 @@ Fleet tracking and centralized OTA updates for home-made ESP32 / ESP8266 devices
 **Website and docs: [xninety9.github.io/otter](https://xninety9.github.io/otter)**
 
 - **Inventory**: every device checks in periodically with its MAC, IP, firmware version,
-  signal strength and uptime. The dashboard shows who is online and when each device was last seen.
+  signal strength and uptime, and tells what it's made of: exact chip (`ESP32-S3 (QFN56)`,
+  `ESP8266EX`…), flash and PSRAM sizes, radios. The dashboard opens on a fleet overview (online,
+  updating, outdated, failed), and each device has a details page.
 - **Firmware registry**: upload `.bin` images, versioned per application and hardware family.
 - **OTA deployments**: target one device, a selection, a tag, or roll out a version to every device
   of an app. Progress streams live to the browser.
@@ -208,11 +210,11 @@ address devices can reach, e.g. your machine's LAN IP.
 ```sh
 export WIFI_SSID=... WIFI_PASS=... OTTER_SERVER=http://192.168.1.10:8000
 
-# ESP32 with ESP-IDF (bootloader rollback enabled)
+# ESP32 with ESP-IDF (bootloader rollback enabled): -e esp32, esp32c6 or esp32s3
 cd firmware/examples/esp32-idf
-pio run -t upload -t monitor
+pio run -e esp32 -t upload -t monitor
 
-# or Arduino: ESP8266 (-e esp8266) or ESP32 (-e esp32)
+# or Arduino: ESP8266 (-e esp8266, or esp8266-1m for 1 MB boards) or ESP32 (-e esp32)
 cd firmware/examples/arduino
 pio run -e esp8266 -t upload -t monitor
 ```

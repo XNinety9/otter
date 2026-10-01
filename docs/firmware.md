@@ -306,6 +306,18 @@ which git ignores, and `source` it: never commit a Wi-Fi password or a key.
 The version is read when the build is configured: after changing it, clean the build
 (`rm -rf .pio/build/<env>`). `tools/release.sh` always does.
 
+## What Otter shows about the hardware
+
+Both agents report the device's hardware by themselves, nothing to add to your code: the exact
+chip as esptool names it (`ESP32-D0WD-V3`, `ESP32-C6FH4 (QFN32)`, `ESP8266EX`…) and its
+revision, the flash size (the chip's, whatever size the build assumed), the PSRAM size, and
+the radios (`Wi-Fi 6, Bluetooth 5 (LE), 802.15.4 (Thread, Zigbee)`).
+
+PSRAM only shows when the firmware supports it (`CONFIG_SPIRAM`). The ESP-IDF example enables
+it for the ESP32-S3 in `sdkconfig.defaults.esp32s3`, which ESP-IDF adds for that target only:
+octal PSRAM, as on N8R8 and N16R8 modules. For quad PSRAM (N4R2, N8R2…) use
+`CONFIG_SPIRAM_MODE_QUAD`. A board without PSRAM still boots.
+
 ## Shipping updates
 
 Once the first firmware is on your devices (over USB), the next ones go through Otter:

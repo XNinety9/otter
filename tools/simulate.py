@@ -28,6 +28,8 @@ SLOT_SIZES = {"esp32": 0x140000, "esp8266": 0xFB000, "esp32c3": 0x1E0000}
 # Exact chip and revision, as the agents report them.
 CHIPS = {"esp32": ("ESP32-D0WD-V3", "3.1"), "esp8266": ("ESP8266EX", None), "esp32c3": ("ESP32-C3 (QFN32)", "0.4")}
 FLASH_SIZES = {"esp32": 4 << 20, "esp8266": 1 << 20, "esp32c3": 4 << 20}
+# Free heap in bytes, roughly: an ESP32 with Wi-Fi and TLS up, an ESP8266.
+HEAP = {"esp32": 190_000, "esp8266": 30_000, "esp32c3": 170_000}
 RADIOS = {"esp32": "Wi-Fi 4, Bluetooth 4.2 (Classic + LE)", "esp8266": "Wi-Fi 4", "esp32c3": "Wi-Fi 4, Bluetooth 5 (LE)"}
 
 
@@ -140,6 +142,8 @@ class FakeDevice:
                 "ota_slot_size": SLOT_SIZES[self.hw],
                 "reset_reason": self.reset_reason,
                 "boot_count": self.boots,
+                "free_heap": HEAP[self.hw] + random.randint(-4000, 4000),
+                "min_free_heap": HEAP[self.hw] - 18_000,
                 "config_version": self.config_version,
                 "wait_s": 0 if self.args.no_long_poll else int(self.interval),
             },
