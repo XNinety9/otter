@@ -11,16 +11,21 @@
 <body>
   <header>
     <h1><img src="logo-mark.png" alt="" width="32" height="32"> Otter</h1>
-    <div id="summary" class="muted"></div>
+    <nav class="sections" aria-label="Sections">
+      <a href="#devices-section">Devices</a>
+      <a href="#rollouts-section">Rollouts</a>
+      <a href="#firmwares-section">Firmwares</a>
+    </nav>
     <span id="live" class="live">connecting…</span>
     <span id="user" class="muted"></span>
     <button id="logout" class="ghost">Log out</button>
   </header>
 
   <main>
-    <section>
+    <section id="devices-section">
+      <div class="overview" role="group" aria-label="Show"></div>
       <div class="section-head">
-        <h2>Devices</h2>
+        <h2>Devices <span class="count" id="device-count"></span></h2>
         <div class="toolbar">
           <button class="ghost selection-cmd" data-cmd="identify" hidden title="Make the selected devices show themselves (LED)">Identify</button>
           <button class="ghost selection-cmd" data-cmd="reboot" hidden>Reboot</button>
@@ -31,7 +36,6 @@
       <div class="filters">
         <input type="search" id="search" placeholder="Search name, MAC, IP, app, version, tag…  ( / )" aria-label="Search devices">
         <select id="tag-filter" aria-label="Filter by tag"></select>
-        <div class="chips" role="group" aria-label="Show"></div>
       </div>
       <div class="table-wrap">
         <table id="devices">
@@ -39,7 +43,7 @@
             <tr>
               <th class="check"><input type="checkbox" id="select-all" aria-label="Select all"></th>
               <th>Device</th>
-              <th>App</th>
+              <th>App · chip</th>
               <th>Firmware</th>
               <th>IP</th>
               <th>Signal</th>
@@ -60,14 +64,15 @@
         <h2>Staged rollouts</h2>
       </div>
       <div id="rollouts"></div>
-      <p id="no-rollouts" class="empty card">No staged rollout yet. Use <strong>Staged…</strong> on a firmware to release it progressively.</p>
+      <p id="no-rollouts" class="empty card"><span class="empty-icon" aria-hidden="true">⇶</span>No staged rollout yet. Use <strong>Staged…</strong> on a firmware to release it to a few devices first, then the others.</p>
     </section>
 
-    <section>
+    <section id="firmwares-section">
       <div class="section-head">
-        <h2>Firmwares</h2>
+        <h2>Firmwares <span class="count" id="firmware-count"></span></h2>
       </div>
       <form id="upload" class="upload">
+        <div class="upload-title"><strong>Upload a firmware</strong><span class="muted">or let <code>tools/release.sh</code> do it</span></div>
         <label>Image <input type="file" name="file" accept=".bin" required></label>
         <label>App <input name="app" list="known-apps" placeholder="weather-station" required></label>
         <label>Hardware <input name="hw" list="known-hws" placeholder="esp32" required></label>
