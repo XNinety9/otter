@@ -183,6 +183,8 @@ class HomeAssistantBridge:
             "model": f"{device['app']} ({device['hw']})",
             "sw_version": device["fw_version"],
         }
+        if device.get("chip"):
+            info["hw_version"] = device["chip"] + (f" rev {device['chip_rev']}" if device.get("chip_rev") else "")
         if config.PUBLIC_URL:
             info["configuration_url"] = config.PUBLIC_URL
         common = {"device": info, "availability": [{"topic": self.status_topic()}], "origin": {"name": "Otter"}}

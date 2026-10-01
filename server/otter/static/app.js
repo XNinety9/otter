@@ -168,6 +168,11 @@ function updateStatusText(d) {
   }
 }
 
+// The exact chip ("ESP32-C6FH4 (QFN32)"), or the family's name for agents that don't report it.
+const chipName = (d) => d.chip || d.hw.toUpperCase().replace(/^ESP32(?=\w)/, "ESP32-");
+// Without the package, for the device list: "ESP32-C6FH4".
+const shortChip = (d) => chipName(d).replace(/ \(.*\)$/, "");
+
 function updateRow(tr, d) {
   const dep = d.last_deployment;
   const active = dep && ACTIVE.has(dep.status);
@@ -180,7 +185,9 @@ function updateRow(tr, d) {
     (AUTH_CHIPS[d.auth] ? `<span class="auth-chip ${d.auth}">${AUTH_CHIPS[d.auth]}</span>` : "") +
     (crashed(d) ? `<span class="crash-chip" title="Last restart: ${esc(lastReset(d))}">⚠ ${esc(d.reset_reason.replaceAll("_", " "))}</span>` : "");
   $(".app", tr).textContent = d.app;
-  $(".hw", tr).textContent = d.hw;
+  const hw = $(".hw", tr);
+  hw.textContent = shortChip(d);
+  hw.title = `${chipName(d)}${d.chip_rev ? `, revision ${d.chip_rev}` : ""} · firmware images for ${d.hw}`;
   $(".fw", tr).innerHTML = active
     ? `${esc(d.fw_version)} <span class="target">→ ${esc(dep.firmware.version)}</span>`
     : esc(d.fw_version);
@@ -311,7 +318,7 @@ const FILTERS = {
 
 function matchesSearch(d, q) {
   if (!q) return true;
-  return [d.name, d.mac, d.ip, d.app, d.hw, d.fw_version, d.channel, ...d.tags].some((v) => v && v.toLowerCase().includes(q));
+  return [d.name, d.mac, d.ip, d.app, d.hw, d.chip, d.fw_version, d.channel, ...d.tags].some((v) => v && v.toLowerCase().includes(q));
 }
 
 const matchesTag = (d) => !state.filter.tag || d.tags.includes(state.filter.tag);
@@ -691,7 +698,8 @@ function renderPanel() {
   $(".panel-sub", panel).textContent = d.name ? d.mac : "";
   const info = [
     ["App", d.app],
-    ["Hardware", d.hw],
+    ["Chip", `${chipName(d)}${d.chip_rev ? ` · rev ${d.chip_rev}` : ""}`],
+    ["Hardware", `${d.hw} (images built for it)`],
     ["Firmware", d.fw_version],
     ["OTA slot", d.ota_slot_size == null ? "—" : bytes(d.ota_slot_size)],
     ["IP", d.ip || "—"],

@@ -92,6 +92,8 @@ def record_checkin(
             check_access(auth, device)
 
         device.hw = body.hw
+        if body.chip:  # agents from before #74 don't send it
+            device.chip, device.chip_rev = body.chip, body.chip_rev
         device.app = body.app
         device.fw_version = body.fw_version
         rebooted = not is_new and restarted(device, body)

@@ -25,6 +25,8 @@ import httpx
 APPS = [("weather-station", "esp32"), ("plant-sensor", "esp8266"), ("led-strip", "esp32c3")]
 # OTA slot sizes of common layouts: ESP-IDF's two-OTA default, a 4 MB ESP8266, 1.9 MB slots.
 SLOT_SIZES = {"esp32": 0x140000, "esp8266": 0xFB000, "esp32c3": 0x1E0000}
+# Exact chip and revision, as the agents report them.
+CHIPS = {"esp32": ("ESP32-D0WD-V3", "3.1"), "esp8266": ("ESP8266EX", None), "esp32c3": ("ESP32-C3 (QFN32)", "0.4")}
 
 
 TOKENS: dict[str, str] = {}
@@ -124,6 +126,8 @@ class FakeDevice:
             json={
                 "mac": self.mac,
                 "hw": self.hw,
+                "chip": CHIPS[self.hw][0],
+                "chip_rev": CHIPS[self.hw][1],
                 "app": self.app,
                 "fw_version": self.version,
                 "ip": self.ip,

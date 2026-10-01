@@ -23,6 +23,8 @@
 #include <mbedtls/pk.h>
 #include <mbedtls/sha256.h>
 #include <sdkconfig.h>
+
+#include "otter_chip.h"
 #define OTTER_DEFAULT_HW CONFIG_IDF_TARGET
 #else
 #error "Otter supports ESP8266 and ESP32 only"
@@ -404,6 +406,14 @@ bool OtterAgent::checkin(Order &order) {
   JsonDocument doc;
   doc["mac"] = WiFi.macAddress();
   doc["hw"] = _cfg.hw;
+#if defined(ESP32)
+  char chipRev[8];
+  otter_chip_revision(chipRev, sizeof(chipRev));
+  doc["chip"] = otter_chip_model();
+  doc["chip_rev"] = chipRev;
+#else
+  doc["chip"] = esp_is_8285() ? "ESP8285" : "ESP8266EX";
+#endif
   doc["app"] = _cfg.app;
   doc["fw_version"] = _cfg.version;
   doc["ip"] = WiFi.localIP().toString();

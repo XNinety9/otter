@@ -111,3 +111,9 @@ def test_install_from_home_assistant(ha, client, checkin, upload, monkeypatch):
     assert ha.install("aabbcc000001") is not None
     assert checkin(mac=MAC)["update"]["version"] == "1.1.0"
     assert ha.install("aabbcc000001") is None  # already being deployed
+
+
+def test_device_reports_its_chip(ha, client, checkin):
+    checkin(mac=MAC, chip="ESP32-C6 (QFN40)", chip_rev="0.1")
+    ha.publish_all()
+    assert msg(ha, f"homeassistant/update/{NODE}/firmware/config")["device"]["hw_version"] == "ESP32-C6 (QFN40) rev 0.1"

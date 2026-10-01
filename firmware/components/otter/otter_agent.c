@@ -1,4 +1,5 @@
 #include "otter_agent.h"
+#include "otter_chip.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -371,6 +372,10 @@ static char *build_checkin_body(void)
     cJSON *obj = cJSON_CreateObject();
     cJSON_AddStringToObject(obj, "mac", mac_str);
     cJSON_AddStringToObject(obj, "hw", s_cfg.hw);
+    char chip_rev[8];
+    otter_chip_revision(chip_rev, sizeof(chip_rev));
+    cJSON_AddStringToObject(obj, "chip", otter_chip_model());
+    cJSON_AddStringToObject(obj, "chip_rev", chip_rev);
     cJSON_AddStringToObject(obj, "app", s_cfg.app_name);
     cJSON_AddStringToObject(obj, "fw_version", s_cfg.version);
     cJSON_AddNumberToObject(obj, "uptime_s", (double)(esp_timer_get_time() / 1000000));
