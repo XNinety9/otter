@@ -1347,6 +1347,11 @@ function openInstallDialog(id) {
 }
 
 $("#install-btn").addEventListener("click", () => openInstallDialog());
+// ESP Web Tools opens its own dialog once the port is picked: ours is modal, so everything
+// outside it, that dialog included, would be inert (#104). Step aside when the install starts.
+$(".install-action", installDialog).addEventListener("click", (e) => {
+  if (e.target.closest("[slot=activate]")) installDialog.close();
+});
 $("#install-fw").addEventListener("change", renderInstallButton);
 
 // --- Live logs (#96) ---------------------------------------------------------
