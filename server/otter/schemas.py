@@ -41,6 +41,10 @@ class CheckinIn(BaseModel):
     hw: str = Field(min_length=1, max_length=32)
     app: str = Field(min_length=1, max_length=64)
     fw_version: str = Field(min_length=1, max_length=32)
+    # The exact chip, as esptool names it ("ESP32-D0WD-V3", "ESP32-C6FH4 (QFN32)"), and its
+    # revision: shown on the dashboard. hw stays what images are matched on.
+    chip: str | None = Field(default=None, max_length=48)
+    chip_rev: str | None = Field(default=None, max_length=8, pattern=r"^[0-9]+\.[0-9]+$")
     ip: str | None = None
     rssi: int | None = None
     uptime_s: int | None = None
@@ -238,6 +242,8 @@ class DeviceOut(BaseModel):
     mac: str
     name: str | None
     hw: str
+    chip: str | None = None
+    chip_rev: str | None = None
     app: str
     fw_version: str
     ip: str | None

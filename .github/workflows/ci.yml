@@ -62,5 +62,7 @@ jobs:
           path: ~/.platformio
           key: pio-${{ matrix.project }}-${{ matrix.env }}-${{ hashFiles(format('firmware/examples/{0}/platformio.ini', matrix.project), format('firmware/examples/{0}/dependencies.lock', matrix.project)) }}
           restore-keys: pio-${{ matrix.project }}-${{ matrix.env }}-
+      - name: Both copies of otter_chip.h are identical
+        run: cmp firmware/components/otter/otter_chip.h firmware/arduino/Otter/src/otter_chip.h
       - run: pip install platformio
       - run: pio run -d firmware/examples/${{ matrix.project }} -e ${{ matrix.env }}

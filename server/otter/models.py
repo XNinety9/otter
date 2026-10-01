@@ -44,6 +44,8 @@ class Device(Base):
     mac: Mapped[str] = mapped_column(String(17), unique=True)
     name: Mapped[str | None]
     hw: Mapped[str]
+    chip: Mapped[str | None]  # exact model, e.g. "ESP32-C6FH4 (QFN32)" (#74)
+    chip_rev: Mapped[str | None]  # its revision, e.g. "0.1"
     app: Mapped[str]
     fw_version: Mapped[str]
     ip: Mapped[str | None]

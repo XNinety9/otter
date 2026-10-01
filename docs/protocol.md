@@ -51,6 +51,8 @@ Content-Type: application/json
 {
   "mac": "a4:cf:12:34:56:78",     // required, identifies the device
   "hw": "esp32",                  // required, hardware family: esp32, esp32c3, esp8266…
+  "chip": "ESP32-D0WD-V3",        // optional, exact chip, named as esptool does (shown in the UI)
+  "chip_rev": "3.1",              // optional, chip revision: major.minor
   "app": "weather-station",       // required, firmware application name
   "fw_version": "1.2.0",          // required, currently running version
   "ip": "192.168.1.42",           // optional, server falls back to the TCP peer address
