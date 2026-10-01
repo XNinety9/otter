@@ -76,10 +76,22 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
             esp_wifi_connect();
         }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *event = data;
+        if (event->reason == WIFI_REASON_IE_IN_4WAY_DIFFERS) {
+            /* Some boxes in WPA3 "compatibility mode" (WPA2 announced, WPA3 offered in a
+             * separate element) fail the handshake with WPA3: use WPA2 with that network. The
+             * driver saves it with the network. */
+            wifi_config_t cfg;
+            if (esp_wifi_get_config(WIFI_IF_STA, &cfg) == ESP_OK && !cfg.sta.disable_wpa3_compatible_mode) {
+                ESP_LOGW(TAG, "this network refuses WPA3 compatibility mode: using WPA2 with it");
+                cfg.sta.disable_wpa3_compatible_mode = 1;
+                esp_wifi_set_config(WIFI_IF_STA, &cfg);
+            }
+        }
         xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED);
         xEventGroupSetBits(s_wifi_events, WIFI_DISCONNECTED);
         if (!s_joining && wifi_configured()) {
-            ESP_LOGW(TAG, "Wi-Fi lost, reconnecting");
+            ESP_LOGW(TAG, "Wi-Fi lost (reason %d), reconnecting", event->reason);
             esp_wifi_connect();
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
