@@ -172,6 +172,13 @@ function updateStatusText(d) {
 const chipName = (d) => d.chip || d.hw.toUpperCase().replace(/^ESP32(?=\w)/, "ESP32-");
 // Without the package, for the device list: "ESP32-C6FH4".
 const shortChip = (d) => chipName(d).replace(/ \(.*\)$/, "");
+// Flash and PSRAM sizes come in powers of two: "4 MB", "512 KB".
+const memSize = (n) => (n >= 1024 * 1024 ? `${+(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
+// "4 MB + 8 MB PSRAM" ("4 MB flash + …" with flashLabel), "" when the agent doesn't report it.
+const memory = (d, flashLabel = "") =>
+  [d.flash_size && memSize(d.flash_size) + flashLabel, d.psram_size && `${memSize(d.psram_size)} PSRAM`]
+    .filter(Boolean)
+    .join(" + ");
 
 function updateRow(tr, d) {
   const dep = d.last_deployment;
@@ -186,7 +193,7 @@ function updateRow(tr, d) {
     (crashed(d) ? `<span class="crash-chip" title="Last restart: ${esc(lastReset(d))}">⚠ ${esc(d.reset_reason.replaceAll("_", " "))}</span>` : "");
   $(".app", tr).textContent = d.app;
   const hw = $(".hw", tr);
-  hw.textContent = shortChip(d);
+  hw.textContent = [shortChip(d), memory(d)].filter(Boolean).join(" · ");
   hw.title = `${chipName(d)}${d.chip_rev ? `, revision ${d.chip_rev}` : ""} · firmware images for ${d.hw}`;
   $(".fw", tr).innerHTML = active
     ? `${esc(d.fw_version)} <span class="target">→ ${esc(dep.firmware.version)}</span>`
@@ -699,6 +706,7 @@ function renderPanel() {
   const info = [
     ["App", d.app],
     ["Chip", `${chipName(d)}${d.chip_rev ? ` · rev ${d.chip_rev}` : ""}`],
+    ["Memory", memory(d, " flash") || "—"],
     ["Hardware", `${d.hw} (images built for it)`],
     ["Firmware", d.fw_version],
     ["OTA slot", d.ota_slot_size == null ? "—" : bytes(d.ota_slot_size)],

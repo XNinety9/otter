@@ -28,3 +28,11 @@ def test_invalid_revision_is_refused(client):
         json={"mac": MAC, "hw": "esp32", "app": "weather", "fw_version": "1.0.0", "chip": "ESP32", "chip_rev": "<b>"},
     )
     assert res.status_code == 422
+
+
+def test_memory_is_stored(client, checkin):
+    checkin(chip="ESP32-S3 (QFN56)", chip_rev="0.2", flash_size=8 << 20, psram_size=8 << 20)
+    device = client.get("/api/devices").json()[0]
+    assert (device["flash_size"], device["psram_size"]) == (8 << 20, 8 << 20)
+    checkin(chip="ESP32-S3 (QFN56)", chip_rev="0.2", flash_size=8 << 20)  # rebuilt without PSRAM support
+    assert client.get("/api/devices").json()[0]["psram_size"] is None

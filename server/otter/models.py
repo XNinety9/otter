@@ -46,6 +46,8 @@ class Device(Base):
     hw: Mapped[str]
     chip: Mapped[str | None]  # exact model, e.g. "ESP32-C6FH4 (QFN32)" (#74)
     chip_rev: Mapped[str | None]  # its revision, e.g. "0.1"
+    flash_size: Mapped[int | None]  # bytes (#80)
+    psram_size: Mapped[int | None]  # bytes, None without PSRAM
     app: Mapped[str]
     fw_version: Mapped[str]
     ip: Mapped[str | None]

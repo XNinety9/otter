@@ -2,8 +2,8 @@
 
 /*
  * The exact chip an ESP32 runs on, named as esptool names it ("ESP32-D0WD-V3",
- * "ESP32-C6FH4 (QFN32)"…), and its revision ("0.1"): read from esp_chip_info() and the
- * eFuses. Otter shows them on the dashboard.
+ * "ESP32-C6FH4 (QFN32)"…), its revision ("0.1"), read from esp_chip_info() and the eFuses,
+ * and its memory: flash and PSRAM sizes. Otter shows them on the dashboard.
  *
  * The ESP-IDF component and the Arduino library each have a copy of this file: keep them
  * identical (CI checks).
@@ -15,7 +15,11 @@
 #include "esp_chip_info.h"
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
+#include "esp_flash.h"
 #include "sdkconfig.h"
+#if CONFIG_SPIRAM
+#include "esp_psram.h"
+#endif
 
 static inline uint32_t otter_efuse_field(const esp_efuse_desc_t *field[])
 {
@@ -89,4 +93,21 @@ static inline void otter_chip_revision(char *buf, size_t size)
     esp_chip_info_t info;
     esp_chip_info(&info);
     snprintf(buf, size, "%d.%d", info.revision / 100, info.revision % 100);
+}
+
+/* Bytes of flash on the chip, whatever size the build assumed; 0 if unknown. */
+static inline uint32_t otter_flash_size(void)
+{
+    uint32_t size = 0;
+    return esp_flash_get_physical_size(NULL, &size) == ESP_OK ? size : 0;
+}
+
+/* Bytes of PSRAM; 0 without, or when the firmware is built without PSRAM support. */
+static inline uint32_t otter_psram_size(void)
+{
+#if CONFIG_SPIRAM
+    return esp_psram_is_initialized() ? esp_psram_get_size() : 0;
+#else
+    return 0;
+#endif
 }
