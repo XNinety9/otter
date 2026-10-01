@@ -16,6 +16,7 @@ ESP_IMAGE_MAGIC = 0xE9
 # esp_app_desc_t, at the start of an ESP32 image's first segment (not in ESP8266 images).
 APP_DESC_MAGIC = b"\x32\x54\xcd\xab"
 APP_DESC_ELF_SHA256 = 0x90  # offset of app_elf_sha256[32] in esp_app_desc_t
+MAX_FACTORY_SIZE = 32 << 20  # the biggest ESP flash
 
 
 def firmware_path(sha256: str) -> Path:
@@ -45,6 +46,35 @@ def store_firmware(src: BinaryIO) -> tuple[str, int]:
     sha = digest.hexdigest()
     os.replace(tmp.name, firmware_path(sha))
     return sha, size
+
+
+def factory_path(sha256: str) -> Path:
+    return config.FIRMWARE_DIR / f"{sha256}.factory.bin"
+
+
+def store_factory(src: BinaryIO) -> str:
+    """Keeps a factory image: the whole flash, to write at offset 0 on a new board. Returns
+    its sha256. It starts with the bootloader, or with padding where the bootloader sits at
+    0x1000 (ESP32, ESP32-S2): no magic byte to check."""
+    config.FIRMWARE_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
+    size = 0
+    with tempfile.NamedTemporaryFile(dir=config.FIRMWARE_DIR, delete=False) as tmp:
+        try:
+            while chunk := src.read(64 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+                if size > MAX_FACTORY_SIZE:
+                    raise ValueError("factory image bigger than 32 MB")
+                tmp.write(chunk)
+            if size == 0:
+                raise ValueError("empty factory image")
+        except Exception:
+            os.unlink(tmp.name)
+            raise
+    sha = digest.hexdigest()
+    os.replace(tmp.name, factory_path(sha))
+    return sha
 
 
 def delete_firmware_file(sha256: str) -> None:

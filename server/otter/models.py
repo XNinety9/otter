@@ -121,6 +121,13 @@ class Firmware(Base):
     elf_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     has_elf: Mapped[bool] = mapped_column(default=False, server_default="0")
     compressed_size: Mapped[int | None]  # size of the zlib copy devices download instead (#25)
+    # The whole flash (bootloader, partitions, app) to install it on a new board from the
+    # browser (#92, see storage.store_factory).
+    factory_sha256: Mapped[str | None] = mapped_column(String(64))
+
+    @property
+    def has_factory(self) -> bool:
+        return self.factory_sha256 is not None
 
     @property
     def signed(self) -> bool:

@@ -1,9 +1,10 @@
 """Endpoints used by the web UI."""
 
 import asyncio
+import re
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -22,9 +23,11 @@ from .storage import (
     compress_firmware,
     delete_elf,
     delete_firmware_file,
+    factory_path,
     firmware_path,
     image_elf_sha256,
     store_elf,
+    store_factory,
     store_firmware,
 )
 
@@ -255,10 +258,12 @@ def upload_firmware(
     channel: str | None = Form(default=None),
     signature: str | None = Form(default=None, max_length=2048),
     elf: UploadFile | None = None,
+    factory: UploadFile | None = None,
     session: Session = Depends(get_session),
 ):
-    """The .bin image, optionally with its signature and the ELF file it was built from (to
-    decode crash reports, see crashes.py)."""
+    """The .bin image, optionally with its signature, the ELF file it was built from (to
+    decode crash reports, see crashes.py) and its factory image (to install it from the
+    browser)."""
     try:
         sha, size = store_firmware(file.file)
     except ValueError as exc:
@@ -293,6 +298,12 @@ def upload_firmware(
         except ValueError as exc:
             _cleanup_orphan(session, sha)
             raise HTTPException(422, str(exc)) from exc
+    if factory is not None:
+        try:
+            fw.factory_sha256 = store_factory(factory.file)
+        except ValueError as exc:
+            _cleanup_orphan(session, sha)
+            raise HTTPException(422, str(exc)) from exc
     session.add(fw)
     try:
         session.flush()
@@ -301,11 +312,63 @@ def upload_firmware(
     except IntegrityError:
         session.rollback()
         _cleanup_orphan(session, sha)
+        if fw.factory_sha256:
+            _cleanup_factory(session, fw.factory_sha256)
         raise HTTPException(409, f"{app} {version} for {hw} already exists") from None
     broadcaster.publish("firmwares")
     if fw.channel:
         reconcile_channels()
     return fw
+
+
+@router.post("/firmwares/{firmware_id}/factory", response_model=FirmwareOut)
+def upload_factory(firmware_id: int, factory: UploadFile, session: Session = Depends(get_session)):
+    fw = session.get(Firmware, firmware_id) or _404("firmware")
+    old = fw.factory_sha256
+    try:
+        fw.factory_sha256 = store_factory(factory.file)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    session.commit()
+    if old and old != fw.factory_sha256:
+        _cleanup_factory(session, old)
+    broadcaster.publish("firmwares")
+    return fw
+
+
+# ESP Web Tools' chip families, from Otter's hardware names: "esp32s3", "esp32s3-cam" →
+# "ESP32-S3"; "esp8266-1m" → "ESP8266".
+WEB_INSTALL_FAMILY = re.compile(r"^esp(8266|32(c2|c3|c5|c6|c61|h2|p4|s2|s3)?)(?![a-z0-9])", re.IGNORECASE)
+
+
+def web_install_family(hw: str) -> str | None:
+    if not (m := WEB_INSTALL_FAMILY.match(hw)):
+        return None
+    return "ESP8266" if m[1] == "8266" else "ESP32" + (f"-{m[2].upper()}" if m[2] else "")
+
+
+@router.get("/firmwares/{firmware_id}/manifest.json")
+def web_install_manifest(firmware_id: int, session: Session = Depends(get_session)):
+    """ESP Web Tools' manifest: the factory image, written at 0 after erasing the flash."""
+    fw = session.get(Firmware, firmware_id) or _404("firmware")
+    family = web_install_family(fw.hw)
+    if not fw.factory_sha256 or not family:
+        raise HTTPException(404, "no factory image for this firmware" if family else f"unknown chip family: {fw.hw}")
+    return {
+        "name": fw.app,
+        "version": fw.version,
+        "new_install_prompt_erase": True,
+        "builds": [{"chipFamily": family, "parts": [{"path": "factory.bin", "offset": 0}]}],
+    }
+
+
+@router.get("/firmwares/{firmware_id}/factory.bin")
+def download_factory(firmware_id: int, session: Session = Depends(get_session)):
+    fw = session.get(Firmware, firmware_id) or _404("firmware")
+    if not fw.factory_sha256:
+        raise HTTPException(404, "no factory image for this firmware")
+    return FileResponse(factory_path(fw.factory_sha256), media_type="application/octet-stream",
+                        filename=f"{fw.app}-{fw.hw}-{fw.version}-factory.bin")
 
 
 def attach_elf(fw: Firmware, elf: UploadFile) -> None:
@@ -359,12 +422,19 @@ def delete_firmware(firmware_id: int, session: Session = Depends(get_session)):
     session.delete(fw)
     session.commit()
     _cleanup_orphan(session, fw.sha256)
+    if fw.factory_sha256:
+        _cleanup_factory(session, fw.factory_sha256)
     if fw.elf_sha256 and not session.scalar(
         select(Firmware.id).where(Firmware.elf_sha256 == fw.elf_sha256, Firmware.has_elf)
     ):
         delete_elf(fw.elf_sha256)
     broadcaster.publish("firmwares")
     broadcaster.publish("resync")
+
+
+def _cleanup_factory(session: Session, sha: str) -> None:
+    if not session.scalar(select(Firmware.id).where(Firmware.factory_sha256 == sha)):
+        factory_path(sha).unlink(missing_ok=True)
 
 
 def _cleanup_orphan(session: Session, sha: str) -> None:
