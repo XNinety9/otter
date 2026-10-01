@@ -372,6 +372,22 @@ dialog#device-panel::backdrop { background: rgb(10 14 20 / .5); backdrop-filter:
 .badge.halted, .badge.aborted { color: var(--err); }
 .badge.completed { color: var(--ok); }
 .badge.paused, .badge.queued { color: var(--warn); }
+dialog#activity-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 20px 22px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 24px 64px rgb(0 0 0 / .32); }
+dialog#activity-dialog::backdrop { background: rgb(10 14 20 / .5); backdrop-filter: blur(2px); }
+#activity-dialog p { margin: 8px 0 12px; font-size: 13px; }
+.activity-list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.activity-list li { display: grid; grid-template-columns: 90px 140px 1fr; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.activity-list .when { color: var(--muted); }
+.activity-list .who { font-weight: 600; overflow-wrap: anywhere; }
+.activity-list li.refused .what { color: var(--muted); }
+@media (max-width: 560px) { .activity-list li { grid-template-columns: 1fr; gap: 2px; } }
+
+/* A viewer account (#100): the controls that change things are hidden. */
+body.read-only :is(#deploy-btn, #deploy-fw, .selection-cmd, #devices .actions, #select-all, #devices .check,
+  #upload, #install-btn, #firmwares .actions, #firmwares .channel-select, .rollout-head .toolbar,
+  .panel-hero .toolbar .rename, .panel-hero .toolbar .forget, .tag-add, .tag-list button, .access-actions,
+  .command-bar, .config-edit, .channel-follow) { display: none !important; }
+body.read-only #user::after { content: " · read-only"; color: var(--warn); }
 dialog#install-dialog { width: min(520px, calc(100vw - 32px)); padding: 20px 22px; border: 1px solid var(--border); border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 24px 64px rgb(0 0 0 / .32); }
 dialog#install-dialog::backdrop { background: rgb(10 14 20 / .5); backdrop-filter: blur(2px); }
 .install { display: grid; gap: 14px; }

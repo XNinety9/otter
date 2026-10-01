@@ -191,6 +191,8 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True)
     password_hash: Mapped[str]  # argon2
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    # admin: everything; viewer: sees everything, changes nothing (#100). API tokens act with it.
+    role: Mapped[str] = mapped_column(String(16), default="admin", server_default="admin")
 
 
 class AuthSession(Base):
@@ -251,6 +253,22 @@ class ConfigValue(Base):
     tag: Mapped[str | None] = mapped_column(String(32), index=True)
     key: Mapped[str] = mapped_column(String(32))
     value: Mapped[str]  # JSON: a string, number or boolean
+
+
+class AuditEvent(Base):
+    """A change made through the UI API (#100, see audit.py). The username is copied: the
+    entry outlives the account."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(default=utcnow, index=True)
+    username: Mapped[str]
+    via_token: Mapped[bool] = mapped_column(default=False)
+    method: Mapped[str] = mapped_column(String(8))
+    path: Mapped[str]
+    text: Mapped[str]  # what happened, readable
+    status: Mapped[int]  # the HTTP status of the answer
 
 
 class DeviceSample(Base):

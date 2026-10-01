@@ -149,6 +149,21 @@ uv run python -m otter.cli revoke-token push
 `tools/push.sh` sends `$OTTER_TOKEN` when it is set. Other commands: `set-password` (closes the
 user's sessions), `list-users`, `delete-user`.
 
+**Roles**: an account is `admin` (the default) or `viewer`, which sees everything and changes
+nothing (it may still watch a device's live logs). The server refuses a viewer's changes and the
+dashboard hides their controls. API tokens act with their account's role, so a monitoring token
+can belong to a viewer.
+
+```sh
+uv run python -m otter.cli create-user alice --role viewer
+uv run python -m otter.cli set-role alice admin
+```
+
+**Activity**: every change made in the dashboard or through the API (deployments, uploads,
+commands, configuration, tags, access…) is logged with who made it, when, and whether it went
+through; **Activity** in the dashboard's header shows it. Command arguments and configuration
+values stay out of it, as they may be secret. Kept 90 days.
+
 Passwords are hashed with argon2; sessions and tokens are stored as SHA-256 hashes only. Logins are
 limited to 10 failures per address every 5 minutes. **Serve Otter over HTTPS as soon as it leaves
 your desk**: over plain HTTP, passwords and cookies can be sniffed on the network (see [HTTPS](#https)).

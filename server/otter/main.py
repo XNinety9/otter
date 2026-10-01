@@ -10,6 +10,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
 
 from . import api_auth, api_device, api_rollouts, api_ui, config
+from .audit import AuditMiddleware
 from .auth import require_user
 from .db import engine
 from .events import broadcaster, wakeups
@@ -65,6 +66,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Otter", lifespan=lifespan)
+app.add_middleware(AuditMiddleware)
 
 
 @app.get("/healthz", include_in_schema=False)

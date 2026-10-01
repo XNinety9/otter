@@ -1,6 +1,8 @@
 """Account and API token management.
 
     python -m otter.cli create-user admin
+    python -m otter.cli create-user alice --role viewer     # sees everything, changes nothing
+    python -m otter.cli set-role alice admin
     python -m otter.cli create-token ci --user admin
     python -m otter.cli list-tokens
     python -m otter.cli revoke-token ci
@@ -39,13 +41,23 @@ def get_user(session, username: str) -> User:
     return user
 
 
+ROLES = ("admin", "viewer")
+
+
 def create_user(args) -> None:
     with SessionLocal() as session:
         if session.scalar(select(User).where(User.username == args.username)):
             sys.exit(f"User {args.username!r} already exists.")
-        session.add(User(username=args.username, password_hash=auth.hash_password(read_password(args))))
+        session.add(User(username=args.username, password_hash=auth.hash_password(read_password(args)), role=args.role))
         session.commit()
-    print(f"User {args.username!r} created.")
+    print(f"User {args.username!r} created ({args.role}).")
+
+
+def set_role(args) -> None:
+    with SessionLocal() as session:
+        get_user(session, args.username).role = args.role
+        session.commit()
+    print(f"{args.username!r} is now {args.role}.")
 
 
 def set_password(args) -> None:
@@ -60,7 +72,7 @@ def set_password(args) -> None:
 def list_users(args) -> None:
     with SessionLocal() as session:
         for user in session.scalars(select(User).order_by(User.username)):
-            print(f"{user.username}\tcreated {user.created_at:%Y-%m-%d}")
+            print(f"{user.username}\t{user.role}\tcreated {user.created_at:%Y-%m-%d}")
 
 
 def delete_user(args) -> None:
@@ -108,7 +120,14 @@ def main(argv: list[str] | None = None) -> None:
         cmd = commands.add_parser(name, help=help_)
         cmd.add_argument("username")
         cmd.add_argument("--password-stdin", action="store_true", help="read the password from stdin")
+        if func is create_user:
+            cmd.add_argument("--role", choices=ROLES, default="admin", help="viewer: sees everything, changes nothing")
         cmd.set_defaults(func=func)
+
+    cmd = commands.add_parser("set-role", help="make an account admin or viewer")
+    cmd.add_argument("username")
+    cmd.add_argument("role", choices=ROLES)
+    cmd.set_defaults(func=set_role)
 
     cmd = commands.add_parser("list-users", help="list accounts")
     cmd.set_defaults(func=list_users)

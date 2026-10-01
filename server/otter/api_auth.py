@@ -22,7 +22,7 @@ def status(request: Request):
     user, _ = auth.current_user(request)
     with SessionLocal() as session:
         has_users = session.scalar(select(func.count(User.id))) > 0
-    return {"user": user.username if user else None, "has_users": has_users}
+    return {"user": user.username if user else None, "role": user.role if user else None, "has_users": has_users}
 
 
 @router.post("/login")

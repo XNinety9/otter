@@ -1292,6 +1292,8 @@ async function start() {
   const status = await (await fetch("/api/auth/status")).json();
   if (!status.user) return goToLogin();
   $("#user").textContent = status.user;
+  // A viewer sees everything and changes nothing (the server refuses anyway, #100).
+  document.body.classList.toggle("read-only", status.role === "viewer");
   loadFilterFromUrl();
   connect();
 }
@@ -1552,4 +1554,30 @@ let historyResize;
 window.addEventListener("resize", () => {
   clearTimeout(historyResize);
   historyResize = setTimeout(() => panel.open && renderHistory(), 150);
+});
+
+// --- Activity log (#100) --------------------------------------------------------
+
+const activityDialog = $("#activity-dialog");
+
+async function openActivity() {
+  activityDialog.showModal();
+  const list = $(".activity-list", activityDialog);
+  list.innerHTML = `<li class="muted">Loading…</li>`;
+  try {
+    const events = await api("GET", "/api/audit?limit=200");
+    list.innerHTML = events.length ? events.map((e) => `
+      <li class="${e.status >= 400 ? "refused" : ""}">
+        <span class="when" title="${esc(new Date(e.at).toLocaleString())}">${ago(e.at)}</span>
+        <span class="who">${esc(e.user)}${e.via_token ? ` <span class="tag" title="Through an API token">token</span>` : ""}</span>
+        <span class="what">${esc(e.text)}${e.status >= 400 ? ` <span class="err" title="HTTP ${e.status}">✗ refused or failed</span>` : ""}</span>
+      </li>`).join("") : `<li class="muted">Nothing yet: changes made in the dashboard or through the API show up here.</li>`;
+  } catch (err) {
+    list.innerHTML = `<li class="err">${esc(err.message)}</li>`;
+  }
+}
+
+$("#activity-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  openActivity();
 });

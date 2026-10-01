@@ -10,7 +10,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from . import commands, config, crashes, devconfig, history, signing
+from . import audit, commands, config, crashes, devconfig, history, signing
+from .audit import describe
 from .api_device import publish_device
 from .api_rollouts import reconcile_channels
 from .auth import require_user
@@ -106,9 +107,10 @@ def get_device_config(device_id: int, session: Session = Depends(get_session)):
 
 
 @router.put("/devices/{device_id}/config", response_model=ConfigOut)
-def put_device_config(device_id: int, body: ConfigIn, session: Session = Depends(get_session)):
+def put_device_config(device_id: int, body: ConfigIn, request: Request, session: Session = Depends(get_session)):
     """Replaces the device's own values (its tags' values still apply underneath)."""
     device = session.get(Device, device_id) or _404("device")
+    describe(request, f"set the configuration of {who(device)}: {keys(body.values)}")
     devconfig.replace(session, body.values, device=device)
     session.commit()
     push_config([device])
@@ -121,21 +123,49 @@ def get_tag_config(name: TagName, session: Session = Depends(get_session)):
 
 
 @router.put("/tags/{name}/config", response_model=ConfigOut)
-def put_tag_config(name: TagName, body: ConfigIn, session: Session = Depends(get_session)):
+def put_tag_config(name: TagName, body: ConfigIn, request: Request, session: Session = Depends(get_session)):
     """Replaces the tag's values: every device with the tag gets them, unless it overrides them."""
+    describe(request, f"set the configuration of #{name}: {keys(body.values)}")
     devconfig.replace(session, body.values, tag=name)
     session.commit()
     push_config(devconfig.devices_of_tag(session, name))
     return ConfigOut(values=devconfig.scope_values(session, tag=name))
 
 
+# --- Activity log (#100, see audit.py) -----------------------------------------
+
+
+def who(device: Device) -> str:
+    return device.name or device.mac
+
+
+def device_names(devices, most: int = 3) -> str:
+    shown = ", ".join(who(d) for d in list(devices)[:most])
+    return shown + (f" and {len(devices) - most} more" if len(devices) > most else "") if devices else "no device"
+
+
+def keys(values: dict) -> str:
+    """The keys only: values may be secret."""
+    return ", ".join(sorted(values)) or "(empty)"
+
+
+@router.get("/audit")
+def audit_log(limit: int = Query(200, ge=1, le=1000)):
+    return [
+        {"at": e.at.replace(tzinfo=UTC).isoformat(), "user": e.username, "via_token": e.via_token, "text": e.text,
+         "status": e.status, "method": e.method, "path": e.path}
+        for e in audit.recent(limit)
+    ]
+
+
 # --- Device credentials (#15, see device_auth.py) ---------------------------
 
 
 @router.post("/devices/{device_id}/revoke", response_model=DeviceOut)
-def revoke_device(device_id: int, session: Session = Depends(get_session)):
+def revoke_device(device_id: int, request: Request, session: Session = Depends(get_session)):
     """Blocks the device, with its token or the fleet key, until it is re-enrolled."""
     device = session.get(Device, device_id) or _404("device")
+    describe(request, f"revoked {who(device)}")
     device.revoked_at = utcnow()
     device.token_hash = None
     session.commit()
@@ -145,9 +175,10 @@ def revoke_device(device_id: int, session: Session = Depends(get_session)):
 
 
 @router.post("/devices/{device_id}/reenroll", response_model=DeviceOut)
-def reenroll_device(device_id: int, session: Session = Depends(get_session)):
+def reenroll_device(device_id: int, request: Request, session: Session = Depends(get_session)):
     """Forgets the device's token: its next check-in with the fleet key gets a new one."""
     device = session.get(Device, device_id) or _404("device")
+    describe(request, f"re-enrolled {who(device)}")
     device.revoked_at = device.token_used_at = device.token_hash = device.token_lost_at = None
     device.approved = True
     session.commit()
@@ -156,8 +187,9 @@ def reenroll_device(device_id: int, session: Session = Depends(get_session)):
 
 
 @router.post("/devices/{device_id}/approve", response_model=DeviceOut)
-def approve_device(device_id: int, session: Session = Depends(get_session)):
+def approve_device(device_id: int, request: Request, session: Session = Depends(get_session)):
     device = session.get(Device, device_id) or _404("device")
+    describe(request, f"approved {who(device)}")
     device.approved = True
     session.commit()
     publish_device(device)
@@ -173,9 +205,10 @@ def device_commands(device_id: int, limit: int = 20, session: Session = Depends(
 
 
 @router.post("/commands", response_model=list[CommandOut], status_code=201)
-def send_commands(body: CommandIn, session: Session = Depends(get_session)):
+def send_commands(body: CommandIn, request: Request, session: Session = Depends(get_session)):
     """Queues a command for each device; long-polling devices get it within a second or two."""
     devices = session.scalars(select(Device).where(Device.id.in_(body.device_ids))).all()
+    describe(request, f"sent {body.name} to {device_names(devices)}")  # not its arguments: they may be secret
     if len(devices) != len(set(body.device_ids)):
         raise HTTPException(404, "unknown device")
     queued = [commands.queue(device, body.name, body.args) for device in devices]
@@ -187,8 +220,16 @@ def send_commands(body: CommandIn, session: Session = Depends(get_session)):
 
 
 @router.patch("/devices/{device_id}", response_model=DeviceOut)
-def patch_device(device_id: int, body: DevicePatch, session: Session = Depends(get_session)):
+def patch_device(device_id: int, body: DevicePatch, request: Request, session: Session = Depends(get_session)):
     device = session.get(Device, device_id) or _404("device")
+    changes = []
+    if "name" in body.model_fields_set:
+        changes.append(f"renamed it {body.name or '(no name)'}")
+    if "tags" in body.model_fields_set:
+        changes.append("tags " + (" ".join(f"#{t}" for t in body.tags or []) or "none"))
+    if "channel" in body.model_fields_set:
+        changes.append(f"channel {body.channel or 'none'}")
+    describe(request, f"changed {who(device)}: {', '.join(changes)}")
     if "name" in body.model_fields_set:
         device.name = (body.name or "").strip() or None
     if "tags" in body.model_fields_set:
@@ -231,8 +272,9 @@ def list_tags(session: Session = Depends(get_session)):
 
 
 @router.delete("/devices/{device_id}", status_code=204)
-def delete_device(device_id: int, session: Session = Depends(get_session)):
+def delete_device(device_id: int, request: Request, session: Session = Depends(get_session)):
     device = session.get(Device, device_id) or _404("device")
+    describe(request, f"forgot {who(device)}")
     session.delete(device)
     session.flush()
     delete_unused_tags(session)
@@ -300,11 +342,13 @@ def upload_firmware(
     signature: str | None = Form(default=None, max_length=2048),
     elf: UploadFile | None = None,
     factory: UploadFile | None = None,
+    request: Request = None,
     session: Session = Depends(get_session),
 ):
     """The .bin image, optionally with its signature, the ELF file it was built from (to
     decode crash reports, see crashes.py) and its factory image (to install it from the
     browser)."""
+    describe(request, f"uploaded {app.strip()} {version.strip()} ({hw.strip()})")
     try:
         sha, size = store_firmware(file.file)
     except ValueError as exc:
@@ -442,9 +486,11 @@ def device_crashes(device_id: int, limit: int = 20, session: Session = Depends(g
 
 
 @router.patch("/firmwares/{firmware_id}", response_model=FirmwareOut)
-def patch_firmware(firmware_id: int, body: FirmwarePatch, session: Session = Depends(get_session)):
+def patch_firmware(firmware_id: int, body: FirmwarePatch, request: Request, session: Session = Depends(get_session)):
     """Publishes the firmware on a release channel: its followers are updated right away."""
     fw = session.get(Firmware, firmware_id) or _404("firmware")
+    describe(request, f"published {fw.app} {fw.version} ({fw.hw}) on {body.channel}" if body.channel
+             else f"unpublished {fw.app} {fw.version} ({fw.hw})")
     fw.channel = body.channel
     session.commit()
     broadcaster.publish("firmwares")
@@ -453,8 +499,9 @@ def patch_firmware(firmware_id: int, body: FirmwarePatch, session: Session = Dep
 
 
 @router.delete("/firmwares/{firmware_id}", status_code=204)
-def delete_firmware(firmware_id: int, session: Session = Depends(get_session)):
+def delete_firmware(firmware_id: int, request: Request, session: Session = Depends(get_session)):
     fw = session.get(Firmware, firmware_id) or _404("firmware")
+    describe(request, f"deleted {fw.app} {fw.version} ({fw.hw})")
     in_use = session.scalar(
         select(Deployment.id).where(Deployment.firmware_id == fw.id, Deployment.status.in_(OPEN_STATES))
     )
@@ -487,8 +534,10 @@ def _cleanup_orphan(session: Session, sha: str) -> None:
 
 
 @router.post("/deployments", response_model=list[DeviceOut], status_code=201)
-def create_deployments(body: DeployIn, session: Session = Depends(get_session)):
+def create_deployments(body: DeployIn, request: Request, session: Session = Depends(get_session)):
     fw = session.get(Firmware, body.firmware_id) or _404("firmware")
+    target = " ".join(f"#{t}" for t in body.tags) if body.tags else f"{len(set(body.device_ids))} device(s)"
+    describe(request, f"deployed {fw.app} {fw.version} to {target}")
     devices = list(session.scalars(select(Device).where(Device.id.in_(body.device_ids))).all())
     if len(devices) != len(set(body.device_ids)):
         raise HTTPException(404, "unknown device")
@@ -516,6 +565,7 @@ def create_deployments(body: DeployIn, session: Session = Depends(get_session)):
         if not outdated and not devices:
             raise HTTPException(422, f"{fw.app} {fw.version} is too big for every device tagged {tag_list}")
         devices += [d for d in outdated if d not in devices]
+    describe(request, f"deployed {fw.app} {fw.version} to {device_names(devices)}")
 
     for device in devices:
         # Also drops a queued rollout deployment, which would otherwise override this one later.
@@ -529,8 +579,9 @@ def create_deployments(body: DeployIn, session: Session = Depends(get_session)):
 
 
 @router.post("/deployments/{deployment_id}/cancel", response_model=DeviceOut)
-def cancel_deployment(deployment_id: int, session: Session = Depends(get_session)):
+def cancel_deployment(deployment_id: int, request: Request, session: Session = Depends(get_session)):
     deployment = session.get(Deployment, deployment_id) or _404("deployment")
+    describe(request, f"cancelled {deployment.firmware.app} {deployment.firmware.version} on {who(deployment.device)}")
     if deployment.status not in OPEN_STATES:
         raise HTTPException(409, f"deployment is already {deployment.status}")
     deployment.status = "cancelled"
