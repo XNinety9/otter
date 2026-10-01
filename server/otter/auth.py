@@ -7,6 +7,7 @@ hashed with argon2. Accounts and tokens are managed with `python -m otter.cli`.
 """
 
 import hashlib
+import re
 import secrets
 import threading
 import time
@@ -96,14 +97,22 @@ def current_user(request: Request) -> tuple[User | None, bool]:
     return None, False
 
 
+# What a viewer may still do besides reading: watching a device's live logs.
+VIEWER_WRITES = re.compile(r"^/api/devices/\d+/logs/(watch|stop)$")
+
+
 def require_user(request: Request) -> User:
     """FastAPI dependency protecting the UI API."""
     user, via_token = current_user(request)
     if user is None:
         raise HTTPException(401, "authentication required")
-    if request.method not in SAFE_METHODS and not via_token:
-        check_same_origin(request)
+    if request.method not in SAFE_METHODS:
+        if not via_token:
+            check_same_origin(request)
+        if user.role != "admin" and not VIEWER_WRITES.match(request.url.path):
+            raise HTTPException(403, "read-only account: ask an admin")
     request.state.user = user
+    request.state.via_token = via_token
     return user
 
 

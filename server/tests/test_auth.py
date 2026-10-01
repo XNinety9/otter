@@ -32,7 +32,7 @@ def test_open_endpoints_stay_open(client, checkin):
     assert client.get("/healthz").status_code == 200
     assert client.get("/").status_code == 200  # the page itself; it redirects to login client-side
     checkin()  # devices keep using the fleet key, not user accounts
-    assert client.get("/api/auth/status").json() == {"user": None, "has_users": True}
+    assert client.get("/api/auth/status").json() == {"user": None, "role": None, "has_users": True}
 
 
 def test_login_logout(client):

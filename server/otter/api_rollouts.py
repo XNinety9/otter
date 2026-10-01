@@ -3,12 +3,13 @@
 import json
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from . import channels, rollouts
 from .api_device import publish_device
+from .audit import describe
 from .auth import require_user
 from .db import SessionLocal, get_session
 from .events import broadcaster, wakeups
@@ -77,10 +78,12 @@ def list_rollouts(limit: int = 20, session: Session = Depends(get_session)):
 
 
 @router.post("/rollouts", response_model=RolloutOut, status_code=201)
-def create_rollout(body: RolloutIn, session: Session = Depends(get_session)):
+def create_rollout(body: RolloutIn, request: Request, session: Session = Depends(get_session)):
     fw = session.get(Firmware, body.firmware_id)
     if fw is None:
         raise HTTPException(404, "unknown firmware")
+    target = (f"channel {body.channel}" if body.channel else " ".join(f"#{t}" for t in body.tags) or "every device")
+    describe(request, f"started a staged rollout of {fw.app} {fw.version} to {target} ({', '.join(f'{s} %' for s in body.stages)})")
     try:
         rollout, changes = rollouts.create(
             session, fw, sorted(set(body.tags)), body.stages, body.soak_s, body.max_failure_rate, body.channel
@@ -103,12 +106,14 @@ ACTIONS = {
 
 
 @router.post("/rollouts/{rollout_id}/{action}", response_model=RolloutOut)
-def rollout_action(rollout_id: int, action: str, session: Session = Depends(get_session)):
+def rollout_action(rollout_id: int, action: str, request: Request, session: Session = Depends(get_session)):
     if action not in ACTIONS:
         raise HTTPException(404, f"unknown action {action}")
     rollout = session.get(Rollout, rollout_id)
     if rollout is None:
         raise HTTPException(404, "unknown rollout")
+    done = {"pause": "paused", "resume": "resumed", "advance": "moved to the next stage", "abort": "aborted"}[action]
+    describe(request, f"{done}: the rollout of {rollout.firmware.app} {rollout.firmware.version}")
     try:
         changes = ACTIONS[action](rollout)
     except rollouts.RolloutError as exc:

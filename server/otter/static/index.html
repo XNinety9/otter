@@ -15,6 +15,7 @@
       <a href="#devices-section">Devices</a>
       <a href="#rollouts-section">Rollouts</a>
       <a href="#firmwares-section">Firmwares</a>
+      <a href="#" id="activity-link">Activity</a>
     </nav>
     <span id="live" class="live">connecting…</span>
     <span id="user" class="muted"></span>
@@ -230,6 +231,17 @@
         </div>
       </section>
     </div>
+  </dialog>
+
+  <dialog id="activity-dialog" aria-labelledby="activity-title">
+    <form method="dialog">
+      <div class="install-head">
+        <h2 id="activity-title">Activity</h2>
+        <button class="ghost" value="close" aria-label="Close">✕</button>
+      </div>
+      <p class="muted">Changes made in the dashboard or through the API, newest first (kept 90 days).</p>
+      <ul class="activity-list"></ul>
+    </form>
   </dialog>
 
   <dialog id="install-dialog" aria-labelledby="install-title">
